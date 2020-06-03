@@ -3,7 +3,7 @@ package source
 import (
 	"bufio"
 	"bytes"
-	"encoding/binary"
+	"io"
 	"io/ioutil"
 	"os"
 )
@@ -17,46 +17,13 @@ type FileSource struct {
 	error    error
 }
 
-// ReadString parses the buffer for a string type
-func (fileSource *FileSource) ReadString() (string, error) {
-	var stringLength int32
-
-	if stringLengthErr := binary.Read(fileSource.reader, binary.LittleEndian, &stringLength); stringLengthErr != nil {
-		return "", stringLengthErr
-	}
-
-	stringBytes, err := fileSource.Read(int(stringLength))
-
-	if err != nil {
-		return "", err
-	}
-
-	stringBytes = bytes.Trim(stringBytes, "\x00")
-
-	return string(stringBytes), nil
-}
-
-// Read reads a number of bytes from the buffer
-func (fileSource *FileSource) Read(numberOfBytes int) ([]byte, error) {
-	bytes := make([]byte, numberOfBytes)
-
-	_, err := fileSource.reader.Read(bytes)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return bytes, nil
-}
-
-// ReadAsType reads data from the buffer and places it into a request type. This uses binary.Read internally
-func (fileSource *FileSource) ReadAsType(interfaceType interface{}) error {
-	return binary.Read(fileSource.reader, binary.LittleEndian, interfaceType)
-}
-
 // Error returns an error if present
 func (fileSource *FileSource) Error() error {
 	return fileSource.error
+}
+
+func (fileSource *FileSource) Reader() io.Reader {
+	return fileSource.reader
 }
 
 // FromFile returns a source for a requested file

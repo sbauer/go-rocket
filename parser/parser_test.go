@@ -3,6 +3,7 @@ package parser
 import (
 	"errors"
 	"github.com/sbauer/go-rocket/source"
+	"io"
 	"testing"
 )
 
@@ -19,15 +20,7 @@ type mockSource struct {
 	error error
 }
 
-func (s *mockSource) ReadString() (string, error) {
-	return "testing", nil
-}
-
-func (s *mockSource) Read(numberOfBytes int) ([]byte, error) {
-	return make([]byte, 4), nil
-}
-
-func (s *mockSource) ReadAsType(i interface{}) error {
+func (s *mockSource) Reader() io.Reader {
 	return nil
 }
 
