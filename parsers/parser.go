@@ -13,6 +13,7 @@ import (
 
 // Parser parses the replay file
 type Parser struct {
+	dataSource source.Source
 }
 
 // HeaderData is used to pull binary header data from the replay file
@@ -25,8 +26,7 @@ type HeaderData struct {
 
 // Parse processes the replay file and returns an instance of Replay
 func Parse(dataSource source.Source) (*rocket.Replay, error) {
-
-	parser := &Parser{}
+	parser := &Parser{dataSource: dataSource}
 
 	if error := dataSource.Error(); error != nil {
 		return nil, error
@@ -56,71 +56,20 @@ func (parser *Parser) parseFile(reader io.Reader) (*rocket.Replay, error) {
 
 func (parser *Parser) parseBody(reader io.Reader, replay *rocket.Replay) error {
 
-	var (
-		contentSize int32
-		crc         uint32
-		error       error
-	)
-
-	parser.ReadAsType(reader, &contentSize)
-	parser.ReadAsType(reader, &crc)
-
-	replay.Levels, error = parser.parseStringList(reader)
-
-	keyframeSize, _ := parser.ReadInt32(reader)
-
-	for index := 0; index < int(keyframeSize); index++ {
-		time, _ := parser.ReadFloat32(reader)
-		frame, _ := parser.ReadInt32(reader)
-		position, _ := parser.ReadInt32(reader)
-		replay.Keyframes = append(replay.Keyframes, &rocket.Keyframe{Time: time, Frame: frame, Position: position})
-	}
-
-	networkSize, _ := parser.ReadInt32(reader)
-
-	networkBuffer := make([]byte, networkSize)
-
-	error = parser.ReadAsType(reader, &networkBuffer)
-
-	if error != nil {
-		fmt.Println("Cannot read network buffer", error)
-		return (error)
-	}
-
-	debugInfoSize, _ := parser.ReadInt32(reader)
-
-	for index := 0; index < int(debugInfoSize); index++ {
-		frame, _ := parser.ReadInt32(reader)
-		user, _ := parser.ReadString(reader)
-		text, _ := parser.ReadString(reader)
-		replay.DebugData = append(replay.DebugData, &rocket.DebugData{User: user, Frame: frame, Text: text})
-	}
-
-	tickmarkSize, _ := parser.ReadInt32(reader)
-
-	for index := 0; index < int(tickmarkSize); index++ {
-		description, _ := parser.ReadString(reader)
-		frame, _ := parser.ReadInt32(reader)
-		replay.Tickmarks = append(replay.Tickmarks, &rocket.Tickmark{Frame: frame, Description: description})
-	}
-
-	replay.Packages, error = parser.parseStringList(reader)
+	bodyParser := NewBodyParser(parser.dataSource)
+	result, error := bodyParser.Parse()
 
 	if error != nil {
 		return error
 	}
 
-	replay.Objects, error = parser.parseStringList(reader)
-
-	if error != nil {
-		return error
-	}
-
-	replay.Names, error = parser.parseStringList(reader)
-
-	if error != nil {
-		return error
-	}
+	replay.DebugData = result.debugData
+	replay.Keyframes = result.keyframes
+	replay.Levels = result.levels
+	replay.Names = result.names
+	replay.Objects = result.objects
+	replay.Packages = result.packages
+	replay.Tickmarks = result.tickmarks
 
 	/*
 		classIndexSize, _ := parser.ReadInt32(reader)
@@ -128,28 +77,6 @@ func (parser *Parser) parseBody(reader io.Reader, replay *rocket.Replay) error {
 	*/
 
 	return nil
-}
-
-func (parser *Parser) parseStringList(reader io.Reader) ([]string, error) {
-	listSize, error := parser.ReadInt32(reader)
-
-	if error != nil {
-		return nil, error
-	}
-
-	list := make([]string, 0, listSize)
-
-	for index := 0; index < int(listSize); index++ {
-		objectName, error := parser.ReadString(reader)
-
-		if error != nil {
-			return nil, error
-		}
-
-		list = append(list, objectName)
-	}
-
-	return list, nil
 }
 
 func (parser *Parser) parseProperties(reader io.Reader, replay *rocket.Replay) (map[string]*rocket.Property, error) {
@@ -173,7 +100,7 @@ func (parser *Parser) parseProperties(reader io.Reader, replay *rocket.Replay) (
 }
 
 func (parser *Parser) parseProperty(reader io.Reader, replay *rocket.Replay) (*rocket.Property, error) {
-	name, initialError := parser.ReadString(reader)
+	name, initialError := readString(reader)
 
 	if initialError != nil {
 		return nil, initialError
@@ -183,7 +110,7 @@ func (parser *Parser) parseProperty(reader io.Reader, replay *rocket.Replay) (*r
 		return nil, nil
 	}
 
-	typeName, typeNameError := parser.ReadString(reader)
+	typeName, typeNameError := readString(reader)
 
 	if typeNameError != nil {
 		return nil, typeNameError
@@ -195,8 +122,8 @@ func (parser *Parser) parseProperty(reader io.Reader, replay *rocket.Replay) (*r
 		err         error
 	)
 
-	parser.ReadAsType(reader, &length)
-	parser.ReadAsType(reader, &unknownData)
+	readAsType(reader, &length)
+	readAsType(reader, &unknownData)
 
 	prop := &rocket.Property{
 		Name: name,
@@ -216,7 +143,7 @@ func (parser *Parser) parsePropertyGroups(reader io.Reader, replay *rocket.Repla
 	var totalGroups int32
 	var err error
 
-	parser.ReadAsType(reader, &totalGroups)
+	readAsType(reader, &totalGroups)
 
 	groups := make([]*rocket.PropertyGroup, totalGroups)
 	for index := int32(0); index < totalGroups; index++ {
@@ -232,10 +159,10 @@ func (parser *Parser) parsePropertyGroups(reader io.Reader, replay *rocket.Repla
 func (parser *Parser) parsePropertyValue(reader io.Reader, typeName string) (interface{}, error) {
 	if strings.Contains(typeName, "Int") {
 		var intValue int32
-		parser.ReadAsType(reader, &intValue)
+		readAsType(reader, &intValue)
 		return intValue, nil
 	} else if strings.Contains(typeName, "Str") || strings.Contains(typeName, "Name") {
-		value, err := parser.ReadString(reader)
+		value, err := readString(reader)
 
 		if err != nil {
 			return nil, err
@@ -243,7 +170,7 @@ func (parser *Parser) parsePropertyValue(reader io.Reader, typeName string) (int
 		return value, nil
 	} else if strings.Contains(typeName, "Float") {
 		var float float32
-		parser.ReadAsType(reader, &float)
+		readAsType(reader, &float)
 		return float, nil
 	} else if strings.Contains(typeName, "Byte") {
 		var (
@@ -251,13 +178,13 @@ func (parser *Parser) parsePropertyValue(reader io.Reader, typeName string) (int
 			err           error
 		)
 
-		first, err = parser.ReadString(reader)
+		first, err = readString(reader)
 
 		if err != nil {
 			return nil, err
 		}
 
-		second, err = parser.ReadString(reader)
+		second, err = readString(reader)
 
 		if err != nil {
 			return nil, err
@@ -266,12 +193,12 @@ func (parser *Parser) parsePropertyValue(reader io.Reader, typeName string) (int
 		return first + "|" + second, nil
 	} else if strings.Contains(typeName, "Bool") {
 		var byte byte
-		parser.ReadAsType(reader, &byte)
+		readAsType(reader, &byte)
 		convertedBool := byte != 0
 		return convertedBool, nil
 	} else if strings.Contains(typeName, "QWord") {
 		var qword int64
-		parser.ReadAsType(reader, &qword)
+		readAsType(reader, &qword)
 		return qword, nil
 	} else {
 		return nil, errors.New("unknown property type: " + typeName)
@@ -282,21 +209,21 @@ func (parser *Parser) parseHeader(reader io.Reader, replay *rocket.Replay) error
 	headerInfo := &HeaderData{}
 	var netVersion uint32
 
-	err := parser.ReadAsType(reader, headerInfo)
+	err := readAsType(reader, headerInfo)
 
 	if err != nil {
 		return err
 	}
 
 	if headerInfo.supportsNetVersion() {
-		if netVersionErr := parser.ReadAsType(reader, &netVersion); netVersionErr != nil {
+		if netVersionErr := readAsType(reader, &netVersion); netVersionErr != nil {
 
 		}
 	}
 
 	var className string
 
-	if className, err = parser.ReadString(reader); err != nil {
+	if className, err = readString(reader); err != nil {
 		return err
 	}
 
@@ -317,10 +244,10 @@ func (info *HeaderData) supportsNetVersion() bool {
 }
 
 // ReadString parses the buffer for a string type. Currently does not understand encoding
-func (parser *Parser) ReadString(reader io.Reader) (string, error) {
-	stringLength, _ := parser.ReadInt32(reader)
+func readString(reader io.Reader) (string, error) {
+	stringLength, _ := readInt32(reader)
 
-	stringBytes, err := parser.read(reader, int(stringLength))
+	stringBytes, err := read(reader, int(stringLength))
 
 	if err != nil {
 		fmt.Println(err)
@@ -333,7 +260,7 @@ func (parser *Parser) ReadString(reader io.Reader) (string, error) {
 }
 
 // Read reads a number of bytes from the buffer
-func (parser *Parser) read(reader io.Reader, numberOfBytes int) ([]byte, error) {
+func read(reader io.Reader, numberOfBytes int) ([]byte, error) {
 	bytes := make([]byte, numberOfBytes)
 
 	_, err := io.ReadFull(reader, bytes)
@@ -347,33 +274,55 @@ func (parser *Parser) read(reader io.Reader, numberOfBytes int) ([]byte, error) 
 }
 
 // ReadAsType reads data from the buffer and places it into a request type. This uses binary.Read internally
-func (parser *Parser) ReadAsType(reader io.Reader, interfaceType interface{}) error {
+func readAsType(reader io.Reader, interfaceType interface{}) error {
 	return binary.Read(reader, binary.LittleEndian, interfaceType)
 }
 
-func (parser *Parser) ReadInt32(reader io.Reader) (int32, error) {
+func readInt32(reader io.Reader) (int32, error) {
 	var (
 		data int32
 	)
-	error := parser.ReadAsType(reader, &data)
+	error := readAsType(reader, &data)
 
 	return data, error
 }
 
-func (parser *Parser) ReadUInt32(reader io.Reader) (uint32, error) {
+func readUInt32(reader io.Reader) (uint32, error) {
 	var (
 		data uint32
 	)
-	error := parser.ReadAsType(reader, &data)
+	error := readAsType(reader, &data)
 
 	return data, error
 }
 
-func (parser *Parser) ReadFloat32(reader io.Reader) (float32, error) {
+func readFloat32(reader io.Reader) (float32, error) {
 	var (
 		data float32
 	)
-	error := parser.ReadAsType(reader, &data)
+	error := readAsType(reader, &data)
 
 	return data, error
+}
+
+func parseStringList(reader io.Reader) ([]string, error) {
+	listSize, error := readInt32(reader)
+
+	if error != nil {
+		return nil, error
+	}
+
+	list := make([]string, 0, listSize)
+
+	for index := 0; index < int(listSize); index++ {
+		objectName, error := readString(reader)
+
+		if error != nil {
+			return nil, error
+		}
+
+		list = append(list, objectName)
+	}
+
+	return list, nil
 }
