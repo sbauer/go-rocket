@@ -1,10 +1,12 @@
-package parser
+package parsers
 
 import (
 	"errors"
-	"github.com/sbauer/go-rocket/source"
+	"fmt"
 	"io"
 	"testing"
+
+	"github.com/sbauer/go-rocket/source"
 )
 
 var invalidSource source.Source
@@ -33,5 +35,13 @@ func TestReplayParser_Parse_Should_Return_Error_For_Nil_Source(t *testing.T) {
 
 	if err == nil {
 		t.Errorf("Expected error, got nil")
+	}
+}
+
+func Test_ParserCanReadFile(t *testing.T) {
+	results, _ := Parse(source.FromFile("../samples/first.replay"))
+
+	for i := 0; i < len(results.Names); i++ {
+		fmt.Println(i, ". ", results.Names[i])
 	}
 }
