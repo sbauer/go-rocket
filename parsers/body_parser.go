@@ -3,6 +3,7 @@ package parsers
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/sbauer/go-rocket"
@@ -10,115 +11,136 @@ import (
 )
 
 type BodyParser struct {
-	data       []byte
 	reader     io.Reader
-	position   int32
-	crc        uint32
-	size       int32
 	dataSource source.Source
-	verifyCrc  bool
-	actualCrc  uint32
 }
 
 type BodyParserResult struct {
-	levels      []string
-	keyframes   []*rocket.Keyframe
-	networkData []byte
-	debugData   []*rocket.DebugData
-	tickmarks   []*rocket.Tickmark
-	packages    []string
-	objects     []string
-	names       []string
+	levels       []string
+	keyframes    []*rocket.Keyframe
+	networkData  []byte
+	debugData    []*rocket.DebugData
+	tickmarks    []*rocket.Tickmark
+	packages     []string
+	objects      []string
+	names        []string
+	classIndices []*rocket.ClassIndex
+	netCache     []*rocket.ClassNetCache
 }
 
 func NewBodyParser(dataSource source.Source) *BodyParser {
-
 	if dataSource == nil {
 		return nil
 	}
 
-	return &BodyParser{dataSource: dataSource, verifyCrc: true}
+	return &BodyParser{dataSource: dataSource}
 }
 
 func (parser *BodyParser) Parse() (*BodyParserResult, error) {
-	if parser.dataSource == nil {
-		return nil, errors.New("Source is nil")
+	if parser == nil || parser.dataSource == nil {
+		return nil, errors.New("source is nil")
 	}
 
-	parser.initializeBufferAndVerifyIfNeeded()
-
-	levels, error := parseStringList(parser.reader)
-
-	if error != nil {
-		return nil, error
+	if err := parser.dataSource.Error(); err != nil {
+		return nil, err
 	}
 
-	keyframes, error := parser.parseKeyFrames()
+	reader := parser.dataSource.Reader()
+	if reader == nil {
+		return nil, errors.New("source reader is nil")
+	}
+	return parser.parse(reader)
+}
 
-	if error != nil {
-		return nil, error
+func (parser *BodyParser) parse(reader io.Reader) (*BodyParserResult, error) {
+	if err := parser.initializeBuffer(reader); err != nil {
+		return nil, err
 	}
 
-	networkBuffer, error := parser.parseNetworkData()
-
-	if error != nil {
-		return nil, error
+	levels, err := parseStringList(parser.reader)
+	if err != nil {
+		return nil, fmt.Errorf("levels: %w", err)
 	}
 
-	debugInfo, error := parser.parseDebugInfo()
-
-	tickmarks, error := parser.parseTickmarks()
-
-	packages, error := parseStringList(parser.reader)
-
-	if error != nil {
-		return nil, error
+	keyframes, err := parser.parseKeyFrames()
+	if err != nil {
+		return nil, fmt.Errorf("keyframes: %w", err)
 	}
 
-	objects, error := parseStringList(parser.reader)
-
-	if error != nil {
-		return nil, error
+	networkBuffer, err := parser.parseNetworkData()
+	if err != nil {
+		return nil, fmt.Errorf("network data: %w", err)
 	}
 
-	names, error := parseStringList(parser.reader)
+	debugInfo, err := parser.parseDebugInfo()
+	if err != nil {
+		return nil, fmt.Errorf("debug data: %w", err)
+	}
 
-	if error != nil {
-		return nil, error
+	tickmarks, err := parser.parseTickmarks()
+	if err != nil {
+		return nil, fmt.Errorf("tickmarks: %w", err)
+	}
+
+	packages, err := parseStringList(parser.reader)
+	if err != nil {
+		return nil, fmt.Errorf("packages: %w", err)
+	}
+
+	objects, err := parseStringList(parser.reader)
+	if err != nil {
+		return nil, fmt.Errorf("objects: %w", err)
+	}
+
+	names, err := parseStringList(parser.reader)
+	if err != nil {
+		return nil, fmt.Errorf("names: %w", err)
+	}
+
+	classIndices, err := parser.parseClassIndices()
+	if err != nil {
+		return nil, fmt.Errorf("class indices: %w", err)
+	}
+
+	netCache, err := parser.parseNetCache()
+	if err != nil {
+		return nil, fmt.Errorf("network cache: %w", err)
 	}
 
 	result := &BodyParserResult{
-		levels:      levels,
-		keyframes:   keyframes,
-		networkData: networkBuffer,
-		debugData:   debugInfo,
-		tickmarks:   tickmarks,
-		packages:    packages,
-		objects:     objects,
-		names:       names,
+		levels:       levels,
+		keyframes:    keyframes,
+		networkData:  networkBuffer,
+		debugData:    debugInfo,
+		tickmarks:    tickmarks,
+		packages:     packages,
+		objects:      objects,
+		names:        names,
+		classIndices: classIndices,
+		netCache:     netCache,
 	}
 
 	return result, nil
 }
 
 func (bp *BodyParser) parseTickmarks() ([]*rocket.Tickmark, error) {
-	tickmarkSize, error := readInt32(bp.reader)
+	tickmarkSize, err := readCount(bp.reader)
 
-	if error != nil {
-		return nil, error
+	if err != nil {
+		return nil, err
 	}
 
-	tickmarks := make([]*rocket.Tickmark, 0, tickmarkSize)
+	tickmarks := make([]*rocket.Tickmark, 0)
 
-	for index := 0; index < int(tickmarkSize); index++ {
-		description, error := readString(bp.reader)
-		if error != nil {
-			return nil, error
+	for index := int32(0); index < tickmarkSize; index++ {
+		description, err := readString(bp.reader)
+		if err != nil {
+			return nil, fmt.Errorf("tickmark %d description: %w", index, err)
 		}
 
-		frame, error := readInt32(bp.reader)
-		if error != nil {
-			return nil, error
+		frame, err := readInt32(bp.reader)
+		if err != nil {
+			return nil, fmt.Errorf("tickmark %d frame: %w", index, err)
 		}
 
 		tickmarks = append(tickmarks, &rocket.Tickmark{Frame: frame, Description: description})
@@ -128,28 +150,28 @@ func (bp *BodyParser) parseTickmarks() ([]*rocket.Tickmark, error) {
 }
 
 func (bp *BodyParser) parseDebugInfo() ([]*rocket.DebugData, error) {
-	debugInfoSize, error := readInt32(bp.reader)
+	debugInfoSize, err := readCount(bp.reader)
 
-	if error != nil {
-		return nil, error
+	if err != nil {
+		return nil, err
 	}
 
-	debugData := make([]*rocket.DebugData, 0, debugInfoSize)
+	debugData := make([]*rocket.DebugData, 0)
 
-	for index := 0; index < int(debugInfoSize); index++ {
-		frame, error := readInt32(bp.reader)
-		if error != nil {
-			return nil, error
+	for index := int32(0); index < debugInfoSize; index++ {
+		frame, err := readInt32(bp.reader)
+		if err != nil {
+			return nil, fmt.Errorf("debug data %d frame: %w", index, err)
 		}
 
-		user, error := readString(bp.reader)
-		if error != nil {
-			return nil, error
+		user, err := readString(bp.reader)
+		if err != nil {
+			return nil, fmt.Errorf("debug data %d user: %w", index, err)
 		}
 
-		text, error := readString(bp.reader)
-		if error != nil {
-			return nil, error
+		text, err := readString(bp.reader)
+		if err != nil {
+			return nil, fmt.Errorf("debug data %d text: %w", index, err)
 		}
 
 		debugData = append(debugData, &rocket.DebugData{User: user, Frame: frame, Text: text})
@@ -159,40 +181,37 @@ func (bp *BodyParser) parseDebugInfo() ([]*rocket.DebugData, error) {
 }
 
 func (bodyParser *BodyParser) parseNetworkData() ([]byte, error) {
-	networkSize, _ := readInt32(bodyParser.reader)
+	networkSize, err := readCount(bodyParser.reader)
+	if err != nil {
+		return nil, err
+	}
 
-	networkBuffer := make([]byte, networkSize)
-
-	error := readAsType(bodyParser.reader, &networkBuffer)
-
-	return networkBuffer, error
+	return read(bodyParser.reader, int64(networkSize))
 }
 
 func (bodyParser *BodyParser) parseKeyFrames() ([]*rocket.Keyframe, error) {
-	keyframeSize, error := readInt32(bodyParser.reader)
+	keyframeSize, err := readCount(bodyParser.reader)
 
-	keyframes := make([]*rocket.Keyframe, 0, keyframeSize)
-
-	if error != nil {
-		return nil, error
+	if err != nil {
+		return nil, err
 	}
 
-	for index := 0; index < int(keyframeSize); index++ {
-		time, error := readFloat32(bodyParser.reader)
+	keyframes := make([]*rocket.Keyframe, 0)
 
-		if error != nil {
-			return nil, error
+	for index := int32(0); index < keyframeSize; index++ {
+		time, err := readFloat32(bodyParser.reader)
+		if err != nil {
+			return nil, fmt.Errorf("keyframe %d time: %w", index, err)
 		}
 
-		frame, error := readInt32(bodyParser.reader)
-
-		if error != nil {
-			return nil, error
+		frame, err := readInt32(bodyParser.reader)
+		if err != nil {
+			return nil, fmt.Errorf("keyframe %d frame: %w", index, err)
 		}
-		position, error := readInt32(bodyParser.reader)
 
-		if error != nil {
-			return nil, error
+		position, err := readInt32(bodyParser.reader)
+		if err != nil {
+			return nil, fmt.Errorf("keyframe %d position: %w", index, err)
 		}
 
 		keyframes = append(keyframes, &rocket.Keyframe{Time: time, Frame: frame, Position: position})
@@ -201,17 +220,78 @@ func (bodyParser *BodyParser) parseKeyFrames() ([]*rocket.Keyframe, error) {
 	return keyframes, nil
 }
 
-func (bodyParser *BodyParser) initializeBufferAndVerifyIfNeeded() {
-	bodyParser.size, _ = readInt32(bodyParser.dataSource.Reader())
-	bodyParser.crc, _ = readUInt32(bodyParser.dataSource.Reader())
-
-	data := make([]byte, bodyParser.size)
-
-	readAsType(bodyParser.dataSource.Reader(), &data)
-
-	if bodyParser.verifyCrc {
-
+func (bodyParser *BodyParser) parseClassIndices() ([]*rocket.ClassIndex, error) {
+	count, err := readCount(bodyParser.reader)
+	if err != nil {
+		return nil, err
 	}
 
-	bodyParser.reader = bytes.NewBuffer(data)
+	indices := make([]*rocket.ClassIndex, 0)
+	for i := int32(0); i < count; i++ {
+		class, err := readIdentifier(bodyParser.reader)
+		if err != nil {
+			return nil, fmt.Errorf("class index %d name: %w", i, err)
+		}
+		index, err := readInt32(bodyParser.reader)
+		if err != nil {
+			return nil, fmt.Errorf("class index %d index: %w", i, err)
+		}
+		indices = append(indices, &rocket.ClassIndex{Class: class, Index: index})
+	}
+	return indices, nil
+}
+
+func (bodyParser *BodyParser) parseNetCache() ([]*rocket.ClassNetCache, error) {
+	count, err := readCount(bodyParser.reader)
+	if err != nil {
+		return nil, err
+	}
+
+	cache := make([]*rocket.ClassNetCache, 0)
+	for i := int32(0); i < count; i++ {
+		var header struct {
+			ObjectIndex int32
+			ParentID    int32
+			CacheID     int32
+		}
+		if err := readAsType(bodyParser.reader, &header); err != nil {
+			return nil, fmt.Errorf("cache %d: %w", i, err)
+		}
+
+		propertyCount, err := readCount(bodyParser.reader)
+		if err != nil {
+			return nil, fmt.Errorf("cache %d property count: %w", i, err)
+		}
+		entry := &rocket.ClassNetCache{
+			ObjectIndex: header.ObjectIndex,
+			ParentID:    header.ParentID,
+			CacheID:     header.CacheID,
+			Properties:  make([]*rocket.NetCacheProperty, 0),
+		}
+		for j := int32(0); j < propertyCount; j++ {
+			property := &rocket.NetCacheProperty{}
+			if err := readAsType(bodyParser.reader, property); err != nil {
+				return nil, fmt.Errorf("cache %d property %d: %w", i, j, err)
+			}
+			entry.Properties = append(entry.Properties, property)
+		}
+		cache = append(cache, entry)
+	}
+	return cache, nil
+}
+
+func (bodyParser *BodyParser) initializeBuffer(reader io.Reader) error {
+	size, err := readCount(reader)
+	if err != nil {
+		return fmt.Errorf("body size: %w", err)
+	}
+	if _, err := readUInt32(reader); err != nil {
+		return fmt.Errorf("body CRC: %w", err)
+	}
+	data, err := read(reader, int64(size))
+	if err != nil {
+		return fmt.Errorf("body data: %w", err)
+	}
+	bodyParser.reader = bytes.NewReader(data)
+	return nil
 }

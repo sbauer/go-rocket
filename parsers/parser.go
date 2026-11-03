@@ -1,11 +1,15 @@
 package parsers
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/sbauer/go-rocket"
 	"github.com/sbauer/go-rocket/source"
@@ -26,55 +30,79 @@ type HeaderData struct {
 
 // Parse processes the replay file and returns an instance of Replay
 func Parse(dataSource source.Source) (*rocket.Replay, error) {
-	parser := &Parser{dataSource: dataSource}
-
-	if error := dataSource.Error(); error != nil {
-		return nil, error
+	if dataSource == nil {
+		return nil, errors.New("source is nil")
 	}
 
-	replay, err := parser.parseFile(dataSource.Reader())
+	if err := dataSource.Error(); err != nil {
+		return nil, err
+	}
 
-	return replay, err
+	reader := dataSource.Reader()
+	if reader == nil {
+		return nil, errors.New("source reader is nil")
+	}
+
+	parser := &Parser{dataSource: dataSource}
+	return parser.parseFile(reader)
 }
 
 func (parser *Parser) parseFile(reader io.Reader) (*rocket.Replay, error) {
 	replay := rocket.NewReplay()
 
-	parser.parseHeader(reader, replay)
-
-	properties, err := parser.parseProperties(reader, replay)
-
+	headerSize, err := readCount(reader)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("header size: %w", err)
 	}
 
-	parser.parseBody(reader, replay)
+	headerCRC, err := readUInt32(reader)
+	if err != nil {
+		return nil, fmt.Errorf("header CRC: %w", err)
+	}
+
+	headerData, err := read(reader, int64(headerSize))
+	if err != nil {
+		return nil, fmt.Errorf("header data: %w", err)
+	}
+
+	headerReader := bytes.NewReader(headerData)
+	headerInfo := &HeaderData{HeaderSize: headerSize, CRC: headerCRC}
+	if err := parser.parseHeader(headerReader, replay, headerInfo); err != nil {
+		return nil, fmt.Errorf("header: %w", err)
+	}
+
+	properties, err := parser.parseProperties(headerReader, replay)
+	if err != nil {
+		return nil, fmt.Errorf("header properties: %w", err)
+	}
+
+	if err := parser.parseBody(reader, replay); err != nil {
+		return nil, fmt.Errorf("body: %w", err)
+	}
+
 	replay.Properties = properties
 
 	return replay, nil
 }
 
 func (parser *Parser) parseBody(reader io.Reader, replay *rocket.Replay) error {
-
 	bodyParser := NewBodyParser(parser.dataSource)
-	result, error := bodyParser.Parse()
+	result, err := bodyParser.parse(reader)
 
-	if error != nil {
-		return error
+	if err != nil {
+		return err
 	}
 
 	replay.DebugData = result.debugData
 	replay.Keyframes = result.keyframes
 	replay.Levels = result.levels
+	replay.NetworkData = result.networkData
 	replay.Names = result.names
 	replay.Objects = result.objects
 	replay.Packages = result.packages
 	replay.Tickmarks = result.tickmarks
-
-	/*
-		classIndexSize, _ := parser.ReadInt32(reader)
-		netCacheSize, _ := parser.ReadInt32(reader)
-	*/
+	replay.ClassIndices = result.classIndices
+	replay.NetCache = result.netCache
 
 	return nil
 }
@@ -100,20 +128,20 @@ func (parser *Parser) parseProperties(reader io.Reader, replay *rocket.Replay) (
 }
 
 func (parser *Parser) parseProperty(reader io.Reader, replay *rocket.Replay) (*rocket.Property, error) {
-	name, initialError := readString(reader)
+	name, initialError := readIdentifier(reader)
 
 	if initialError != nil {
 		return nil, initialError
 	}
 
-	if strings.Contains(name, "None") {
+	if name == "None" {
 		return nil, nil
 	}
 
-	typeName, typeNameError := readString(reader)
+	typeName, typeNameError := readIdentifier(reader)
 
 	if typeNameError != nil {
-		return nil, typeNameError
+		return nil, fmt.Errorf("property %q type: %w", name, typeNameError)
 	}
 
 	var (
@@ -122,108 +150,110 @@ func (parser *Parser) parseProperty(reader io.Reader, replay *rocket.Replay) (*r
 		err         error
 	)
 
-	readAsType(reader, &length)
-	readAsType(reader, &unknownData)
+	if err := readAsType(reader, &length); err != nil {
+		return nil, fmt.Errorf("property %q size: %w", name, err)
+	}
+	if err := readAsType(reader, &unknownData); err != nil {
+		return nil, fmt.Errorf("property %q index: %w", name, err)
+	}
 
 	prop := &rocket.Property{
 		Name: name,
 		Type: typeName,
 	}
 
-	if strings.Contains(typeName, "Array") {
+	if typeName == "ArrayProperty" {
 		prop.Groups, err = parser.parsePropertyGroups(reader, replay)
 	} else {
 		prop.Value, err = parser.parsePropertyValue(reader, typeName)
 	}
 
-	return prop, err
+	if err != nil {
+		return nil, fmt.Errorf("property %q: %w", name, err)
+	}
+
+	return prop, nil
 }
 
 func (parser *Parser) parsePropertyGroups(reader io.Reader, replay *rocket.Replay) ([]*rocket.PropertyGroup, error) {
-	var totalGroups int32
-	var err error
+	totalGroups, err := readCount(reader)
+	if err != nil {
+		return nil, err
+	}
 
-	readAsType(reader, &totalGroups)
-
-	groups := make([]*rocket.PropertyGroup, totalGroups)
+	groups := make([]*rocket.PropertyGroup, 0)
 	for index := int32(0); index < totalGroups; index++ {
 		group := &rocket.PropertyGroup{}
 		group.Properties, err = parser.parseProperties(reader, replay)
-		groups[index] = group
+		if err != nil {
+			return nil, fmt.Errorf("group %d: %w", index, err)
+		}
+		groups = append(groups, group)
 	}
 
-	return groups, err
+	return groups, nil
 }
 
-// TODO: Refactor after figuring out format
 func (parser *Parser) parsePropertyValue(reader io.Reader, typeName string) (interface{}, error) {
-	if strings.Contains(typeName, "Int") {
+	switch typeName {
+	case "IntProperty":
 		var intValue int32
-		readAsType(reader, &intValue)
-		return intValue, nil
-	} else if strings.Contains(typeName, "Str") || strings.Contains(typeName, "Name") {
-		value, err := readString(reader)
-
-		if err != nil {
-			return nil, err
-		}
-		return value, nil
-	} else if strings.Contains(typeName, "Float") {
+		err := readAsType(reader, &intValue)
+		return intValue, err
+	case "StrProperty", "NameProperty":
+		return readString(reader)
+	case "FloatProperty":
 		var float float32
-		readAsType(reader, &float)
-		return float, nil
-	} else if strings.Contains(typeName, "Byte") {
-		var (
-			first, second string
-			err           error
-		)
-
-		first, err = readString(reader)
-
+		err := readAsType(reader, &float)
+		return float, err
+	case "ByteProperty":
+		first, err := readIdentifier(reader)
 		if err != nil {
 			return nil, err
 		}
 
-		second, err = readString(reader)
+		if first == "None" {
+			var value byte
+			err := readAsType(reader, &value)
+			return value, err
+		}
 
+		second, err := readIdentifier(reader)
 		if err != nil {
 			return nil, err
 		}
-
 		return first + "|" + second, nil
-	} else if strings.Contains(typeName, "Bool") {
-		var byte byte
-		readAsType(reader, &byte)
-		convertedBool := byte != 0
-		return convertedBool, nil
-	} else if strings.Contains(typeName, "QWord") {
+	case "BoolProperty":
+		var value byte
+		err := readAsType(reader, &value)
+		return value != 0, err
+	case "QWordProperty":
 		var qword int64
-		readAsType(reader, &qword)
-		return qword, nil
-	} else {
+		err := readAsType(reader, &qword)
+		return qword, err
+	default:
 		return nil, errors.New("unknown property type: " + typeName)
 	}
 }
 
-func (parser *Parser) parseHeader(reader io.Reader, replay *rocket.Replay) error {
-	headerInfo := &HeaderData{}
+func (parser *Parser) parseHeader(reader io.Reader, replay *rocket.Replay, headerInfo *HeaderData) error {
 	var netVersion uint32
 
-	err := readAsType(reader, headerInfo)
-
-	if err != nil {
+	if err := readAsType(reader, &headerInfo.EngineVersion); err != nil {
+		return err
+	}
+	if err := readAsType(reader, &headerInfo.LicenseeVersion); err != nil {
 		return err
 	}
 
 	if headerInfo.supportsNetVersion() {
-		if netVersionErr := readAsType(reader, &netVersion); netVersionErr != nil {
-
+		if err := readAsType(reader, &netVersion); err != nil {
+			return err
 		}
 	}
 
-	var className string
-
-	if className, err = readString(reader); err != nil {
+	className, err := readString(reader)
+	if err != nil {
 		return err
 	}
 
@@ -240,42 +270,131 @@ func (parser *Parser) parseHeader(reader io.Reader, replay *rocket.Replay) error
 }
 
 func (info *HeaderData) supportsNetVersion() bool {
-	return info.EngineVersion >= 868 && info.LicenseeVersion >= 18
+	return info.EngineVersion > 865 && info.LicenseeVersion > 17
 }
 
-// ReadString parses the buffer for a string type. Currently does not understand encoding
 func readString(reader io.Reader) (string, error) {
-	stringLength, _ := readInt32(reader)
+	return readReplayString(reader, false)
+}
 
-	stringBytes, err := read(reader, int(stringLength))
+func readIdentifier(reader io.Reader) (string, error) {
+	return readReplayString(reader, true)
+}
 
+func readReplayString(reader io.Reader, identifier bool) (string, error) {
+	stringLength, err := readInt32(reader)
 	if err != nil {
-		fmt.Println(err)
+		return "", err
+	}
+	if stringLength == 0 {
+		return "", nil
+	}
+
+	size := int64(stringLength)
+	if size < 0 {
+		size *= -2
+	}
+
+	data, err := read(reader, size)
+	if err != nil {
 		return "", err
 	}
 
-	output := string(stringBytes)
+	if stringLength < 0 {
+		if data[len(data)-2] != 0 || data[len(data)-1] != 0 {
+			return "", errors.New("unterminated UTF-16 string")
+		}
 
-	return output, nil
-}
-
-// Read reads a number of bytes from the buffer
-func read(reader io.Reader, numberOfBytes int) ([]byte, error) {
-	bytes := make([]byte, numberOfBytes)
-
-	_, err := io.ReadFull(reader, bytes)
-
-	if err != nil {
-		fmt.Println("read error", err)
-		return nil, err
+		units := make([]uint16, (len(data)-2)/2)
+		for i := range units {
+			units[i] = binary.LittleEndian.Uint16(data[i*2:])
+		}
+		for i := 0; i < len(units); i++ {
+			switch {
+			case units[i] >= 0xd800 && units[i] <= 0xdbff:
+				if i+1 >= len(units) || units[i+1] < 0xdc00 || units[i+1] > 0xdfff {
+					return "", errors.New("invalid UTF-16 surrogate pair")
+				}
+				i++
+			case units[i] >= 0xdc00 && units[i] <= 0xdfff:
+				return "", errors.New("invalid UTF-16 surrogate pair")
+			}
+		}
+		return string(utf16.Decode(units)), nil
 	}
 
-	return bytes, nil
+	if data[len(data)-1] != 0 {
+		return "", errors.New("unterminated string")
+	}
+	data = data[:len(data)-1]
+	if identifier {
+		if !utf8.Valid(data) {
+			return "", errors.New("invalid UTF-8 identifier")
+		}
+		return string(data), nil
+	}
+
+	return decodeWindows1252(data), nil
 }
 
-// ReadAsType reads data from the buffer and places it into a request type. This uses binary.Read internally
+func decodeWindows1252(data []byte) string {
+	var controls = [...]rune{
+		0x20ac, 0x0081, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021,
+		0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008d, 0x017d, 0x008f,
+		0x0090, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014,
+		0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x009d, 0x017e, 0x0178,
+	}
+
+	var result strings.Builder
+	result.Grow(len(data))
+	for _, value := range data {
+		switch {
+		case value < 0x80:
+			result.WriteByte(value)
+		case value < 0xa0:
+			result.WriteRune(controls[value-0x80])
+		default:
+			result.WriteRune(rune(value))
+		}
+	}
+	return result.String()
+}
+
+func read(reader io.Reader, numberOfBytes int64) ([]byte, error) {
+	if numberOfBytes < 0 {
+		return nil, fmt.Errorf("negative byte count: %d", numberOfBytes)
+	}
+	if numberOfBytes > int64(int(^uint(0)>>1)) {
+		return nil, fmt.Errorf("byte count too large: %d", numberOfBytes)
+	}
+	if remaining, ok := reader.(interface{ Len() int }); ok && int64(remaining.Len()) < numberOfBytes {
+		return nil, io.ErrUnexpectedEOF
+	}
+
+	data, err := ioutil.ReadAll(io.LimitReader(reader, numberOfBytes))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) != numberOfBytes {
+		return nil, io.ErrUnexpectedEOF
+	}
+
+	return data, nil
+}
+
 func readAsType(reader io.Reader, interfaceType interface{}) error {
 	return binary.Read(reader, binary.LittleEndian, interfaceType)
+}
+
+func readCount(reader io.Reader) (int32, error) {
+	count, err := readInt32(reader)
+	if err != nil {
+		return 0, err
+	}
+	if count < 0 {
+		return 0, fmt.Errorf("negative size or count: %d", count)
+	}
+	return count, nil
 }
 
 func readInt32(reader io.Reader) (int32, error) {
@@ -306,19 +425,19 @@ func readFloat32(reader io.Reader) (float32, error) {
 }
 
 func parseStringList(reader io.Reader) ([]string, error) {
-	listSize, error := readInt32(reader)
+	listSize, err := readCount(reader)
 
-	if error != nil {
-		return nil, error
+	if err != nil {
+		return nil, err
 	}
 
-	list := make([]string, 0, listSize)
+	list := make([]string, 0)
 
-	for index := 0; index < int(listSize); index++ {
-		objectName, error := readString(reader)
+	for index := int32(0); index < listSize; index++ {
+		objectName, err := readString(reader)
 
-		if error != nil {
-			return nil, error
+		if err != nil {
+			return nil, fmt.Errorf("string %d: %w", index, err)
 		}
 
 		list = append(list, objectName)
