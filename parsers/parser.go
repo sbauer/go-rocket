@@ -17,7 +17,25 @@ import (
 
 // Parser parses the replay file
 type Parser struct {
-	dataSource source.Source
+	dataSource    source.Source
+	crcValidation CRCValidationMode
+}
+
+// CRCValidationMode controls when replay section CRCs are checked.
+type CRCValidationMode uint8
+
+const (
+	// CRCValidationAlways checks CRCs before parsing each section.
+	CRCValidationAlways CRCValidationMode = iota
+	// CRCValidationNever skips CRC checks.
+	CRCValidationNever
+	// CRCValidationOnParseError checks a section CRC only if parsing that section fails.
+	CRCValidationOnParseError
+)
+
+// ParseOptions configures replay parsing.
+type ParseOptions struct {
+	CRCValidation CRCValidationMode
 }
 
 // HeaderData is used to pull binary header data from the replay file
@@ -30,6 +48,14 @@ type HeaderData struct {
 
 // Parse processes the replay file and returns an instance of Replay
 func Parse(dataSource source.Source) (*rocket.Replay, error) {
+	return ParseWithOptions(dataSource, ParseOptions{})
+}
+
+// ParseWithOptions processes a replay file using the supplied options.
+func ParseWithOptions(dataSource source.Source, options ParseOptions) (*rocket.Replay, error) {
+	if options.CRCValidation > CRCValidationOnParseError {
+		return nil, fmt.Errorf("invalid CRC validation mode: %d", options.CRCValidation)
+	}
 	if dataSource == nil {
 		return nil, errors.New("source is nil")
 	}
@@ -43,7 +69,7 @@ func Parse(dataSource source.Source) (*rocket.Replay, error) {
 		return nil, errors.New("source reader is nil")
 	}
 
-	parser := &Parser{dataSource: dataSource}
+	parser := &Parser{dataSource: dataSource, crcValidation: options.CRCValidation}
 	return parser.parseFile(reader)
 }
 
@@ -64,15 +90,26 @@ func (parser *Parser) parseFile(reader io.Reader) (*rocket.Replay, error) {
 	if err != nil {
 		return nil, fmt.Errorf("header data: %w", err)
 	}
+	if parser.crcValidation == CRCValidationAlways {
+		if err := validateCRC("header", headerCRC, headerData); err != nil {
+			return nil, err
+		}
+	}
 
 	headerReader := bytes.NewReader(headerData)
 	headerInfo := &HeaderData{HeaderSize: headerSize, CRC: headerCRC}
 	if err := parser.parseHeader(headerReader, replay, headerInfo); err != nil {
+		if crcErr := parser.headerCRCErrorOnParseFailure(headerCRC, headerData, err); crcErr != nil {
+			return nil, crcErr
+		}
 		return nil, fmt.Errorf("header: %w", err)
 	}
 
 	properties, err := parser.parseProperties(headerReader, replay)
 	if err != nil {
+		if crcErr := parser.headerCRCErrorOnParseFailure(headerCRC, headerData, err); crcErr != nil {
+			return nil, crcErr
+		}
 		return nil, fmt.Errorf("header properties: %w", err)
 	}
 
@@ -85,8 +122,19 @@ func (parser *Parser) parseFile(reader io.Reader) (*rocket.Replay, error) {
 	return replay, nil
 }
 
+func (parser *Parser) headerCRCErrorOnParseFailure(expected uint32, data []byte, parseErr error) error {
+	if parser.crcValidation != CRCValidationOnParseError {
+		return nil
+	}
+	if err := validateCRC("header", expected, data); err != nil {
+		return fmt.Errorf("%w (header parsing failed: %v)", err, parseErr)
+	}
+	return nil
+}
+
 func (parser *Parser) parseBody(reader io.Reader, replay *rocket.Replay) error {
 	bodyParser := NewBodyParser(parser.dataSource)
+	bodyParser.crcValidation = parser.crcValidation
 	result, err := bodyParser.parse(reader)
 
 	if err != nil {
@@ -444,4 +492,36 @@ func parseStringList(reader io.Reader) ([]string, error) {
 	}
 
 	return list, nil
+}
+
+var replayCRCTable = func() [256]uint32 {
+	var table [256]uint32
+	for i := range table {
+		crc := uint32(i) << 24
+		for bit := 0; bit < 8; bit++ {
+			if crc&0x80000000 != 0 {
+				crc = crc<<1 ^ 0x04c11db7
+			} else {
+				crc <<= 1
+			}
+		}
+		table[i] = crc
+	}
+	return table
+}()
+
+func replayCRC32(data []byte) uint32 {
+	crc := uint32(0x10340dfe)
+	for _, value := range data {
+		crc = crc<<8 ^ replayCRCTable[byte(crc>>24)^value]
+	}
+	return crc ^ 0xffffffff
+}
+
+func validateCRC(section string, expected uint32, data []byte) error {
+	actual := replayCRC32(data)
+	if actual != expected {
+		return fmt.Errorf("%s CRC mismatch: stored 0x%08x, computed 0x%08x", section, expected, actual)
+	}
+	return nil
 }
