@@ -51,10 +51,13 @@ Use `source.FromBytes(data)` instead to parse an in-memory replay.
 Replay text is decoded as UTF-16 or Windows-1252; identifiers use UTF-8.
 Strings are returned without their serialized null terminators.
 
+Header and body CRCs are checked by `parsers.Parse` by default. Use
+`parsers.ParseWithOptions` with `ParseOptions{CRCValidation: parsers.CRCValidationNever}`
+to skip checks, or `CRCValidationOnParseError` to check a section only if parsing it fails.
+
 ## Limitations
 
 - Network frames and actor data are not decoded.
-- Header and body CRCs are not validated.
 - Some property types and replay version quirks are not supported.
 
 ## Tests

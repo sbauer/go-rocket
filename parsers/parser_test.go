@@ -181,6 +181,67 @@ func TestParseRejectsNegativeSectionSizes(t *testing.T) {
 	}
 }
 
+func TestParseValidatesSectionCRCs(t *testing.T) {
+	data, err := ioutil.ReadFile("../samples/first.replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	headerSize := int(binary.LittleEndian.Uint32(data))
+	bodyStart := 8 + headerSize
+	bodySize := int(binary.LittleEndian.Uint32(data[bodyStart:]))
+	tests := []struct {
+		name        string
+		offset      int
+		wantSection string
+	}{
+		{name: "header", offset: 8, wantSection: "header"},
+		{name: "body", offset: bodyStart + 8 + bodySize - 1, wantSection: "body"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mutated := append([]byte(nil), data...)
+			mutated[tt.offset] ^= 1
+			_, err := Parse(source.FromBytes(mutated))
+			if err == nil || !strings.Contains(err.Error(), tt.wantSection+" CRC mismatch") {
+				t.Fatalf("got %v, want %s CRC mismatch", err, tt.wantSection)
+			}
+		})
+	}
+}
+
+func TestParseCRCValidationOptions(t *testing.T) {
+	data, err := ioutil.ReadFile("../samples/first.replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	headerSize := int(binary.LittleEndian.Uint32(data))
+	bodyStart := 8 + headerSize
+	bodySize := int(binary.LittleEndian.Uint32(data[bodyStart:]))
+	validButCorrupt := append([]byte(nil), data...)
+	validButCorrupt[8] ^= 1
+	validButCorrupt[bodyStart+8+bodySize-1] ^= 1
+	for _, mode := range []CRCValidationMode{CRCValidationNever, CRCValidationOnParseError} {
+		if _, err := ParseWithOptions(source.FromBytes(validButCorrupt), ParseOptions{CRCValidation: mode}); err != nil {
+			t.Fatalf("mode %d rejected parseable data with CRC validation disabled: %v", mode, err)
+		}
+	}
+
+	headerParseFailure := append([]byte(nil), data...)
+	headerParseFailure[8+headerSize-1] ^= 1
+	if _, err := ParseWithOptions(source.FromBytes(headerParseFailure), ParseOptions{CRCValidation: CRCValidationOnParseError}); err == nil ||
+		!strings.Contains(err.Error(), "header CRC mismatch") {
+		t.Fatalf("got %v, want header CRC mismatch after a header parse failure", err)
+	}
+
+	bodyParseFailure := append([]byte(nil), data...)
+	binary.LittleEndian.PutUint32(bodyParseFailure[bodyStart+8:], ^uint32(0))
+	if _, err := ParseWithOptions(source.FromBytes(bodyParseFailure), ParseOptions{CRCValidation: CRCValidationOnParseError}); err == nil ||
+		!strings.Contains(err.Error(), "body CRC mismatch") {
+		t.Fatalf("got %v, want body CRC mismatch after a body parse failure", err)
+	}
+}
+
 func TestReadReplayString(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -316,7 +377,7 @@ func TestParseNetVersionBoundary(t *testing.T) {
 
 		var replay bytes.Buffer
 		writeValue(t, &replay, int32(header.Len()))
-		writeValue(t, &replay, uint32(0))
+		writeValue(t, &replay, replayCRC32(header.Bytes()))
 		replay.Write(header.Bytes())
 		replay.Write(emptyBody(t))
 
@@ -336,6 +397,7 @@ func TestBodyParserRejectsNegativeCounts(t *testing.T) {
 		t.Run(section, func(t *testing.T) {
 			body := emptyBody(t)
 			binary.LittleEndian.PutUint32(body[8+index*4:], ^uint32(0))
+			setBodyCRC(body)
 			_, err := NewBodyParser(source.FromBytes(body)).Parse()
 			if err == nil || !strings.Contains(err.Error(), section) {
 				t.Fatalf("got %v, want an error in %s", err, section)
@@ -362,7 +424,9 @@ func TestBodyParserReportsTruncatedEntries(t *testing.T) {
 			for _, value := range tt.values {
 				writeValue(t, &data, value)
 			}
-			_, err := NewBodyParser(source.FromBytes(data.Bytes())).Parse()
+			body := data.Bytes()
+			setBodyCRC(body)
+			_, err := NewBodyParser(source.FromBytes(body)).Parse()
 			if err == nil || !strings.Contains(err.Error(), tt.section) {
 				t.Fatalf("got %v, want a truncation error in %s", err, tt.section)
 			}
@@ -392,5 +456,10 @@ func emptyBody(t *testing.T) []byte {
 	for i := 0; i < 10; i++ {
 		writeValue(t, &body, int32(0))
 	}
+	setBodyCRC(body.Bytes())
 	return body.Bytes()
+}
+
+func setBodyCRC(body []byte) {
+	binary.LittleEndian.PutUint32(body[4:], replayCRC32(body[8:]))
 }

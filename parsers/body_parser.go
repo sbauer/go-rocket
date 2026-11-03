@@ -11,8 +11,11 @@ import (
 )
 
 type BodyParser struct {
-	reader     io.Reader
-	dataSource source.Source
+	reader        io.Reader
+	dataSource    source.Source
+	crcValidation CRCValidationMode
+	crc           uint32
+	data          []byte
 }
 
 type BodyParserResult struct {
@@ -52,10 +55,22 @@ func (parser *BodyParser) Parse() (*BodyParserResult, error) {
 	return parser.parse(reader)
 }
 
-func (parser *BodyParser) parse(reader io.Reader) (*BodyParserResult, error) {
+func (parser *BodyParser) parse(reader io.Reader) (result *BodyParserResult, parseErr error) {
 	if err := parser.initializeBuffer(reader); err != nil {
 		return nil, err
 	}
+	if parser.crcValidation == CRCValidationAlways {
+		if err := validateCRC("body", parser.crc, parser.data); err != nil {
+			return nil, err
+		}
+	}
+	defer func() {
+		if parseErr != nil && parser.crcValidation == CRCValidationOnParseError {
+			if err := validateCRC("body", parser.crc, parser.data); err != nil {
+				parseErr = fmt.Errorf("%w (body parsing failed: %v)", err, parseErr)
+			}
+		}
+	}()
 
 	levels, err := parseStringList(parser.reader)
 	if err != nil {
@@ -107,7 +122,7 @@ func (parser *BodyParser) parse(reader io.Reader) (*BodyParserResult, error) {
 		return nil, fmt.Errorf("network cache: %w", err)
 	}
 
-	result := &BodyParserResult{
+	result = &BodyParserResult{
 		levels:       levels,
 		keyframes:    keyframes,
 		networkData:  networkBuffer,
@@ -285,13 +300,15 @@ func (bodyParser *BodyParser) initializeBuffer(reader io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("body size: %w", err)
 	}
-	if _, err := readUInt32(reader); err != nil {
+	bodyParser.crc, err = readUInt32(reader)
+	if err != nil {
 		return fmt.Errorf("body CRC: %w", err)
 	}
 	data, err := read(reader, int64(size))
 	if err != nil {
 		return fmt.Errorf("body data: %w", err)
 	}
+	bodyParser.data = data
 	bodyParser.reader = bytes.NewReader(data)
 	return nil
 }
