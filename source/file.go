@@ -34,6 +34,8 @@ func FromFile(fileName string) Source {
 	if err != nil {
 		source.error = err
 	} else {
+		defer file.Close()
+
 		data, readError := ioutil.ReadAll(file)
 
 		if readError != nil {
