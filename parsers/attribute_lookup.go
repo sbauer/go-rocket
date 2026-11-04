@@ -61,16 +61,17 @@ var knownClassParents = map[string]string{
 }
 
 var knownArchetypeClasses = map[string]string{
-	"Archetypes.Ball.Ball_Default":                     "TAGame.Ball_TA",
-	"Archetypes.Car.Car_Default":                       "TAGame.Car_TA",
-	"Archetypes.CarComponents.CarComponent_Boost":      "TAGame.CarComponent_Boost_TA",
-	"Archetypes.CarComponents.CarComponent_Dodge":      "TAGame.CarComponent_Dodge_TA",
-	"Archetypes.CarComponents.CarComponent_DoubleJump": "TAGame.CarComponent_DoubleJump_TA",
-	"Archetypes.CarComponents.CarComponent_FlipCar":    "TAGame.CarComponent_FlipCar_TA",
-	"Archetypes.CarComponents.CarComponent_Jump":       "TAGame.CarComponent_Jump_TA",
-	"Archetypes.GameEvent.GameEvent_Soccar":            "TAGame.GameEvent_Soccar_TA",
-	"Archetypes.Teams.Team0":                           "TAGame.Team_Soccar_TA",
-	"Archetypes.Teams.Team1":                           "TAGame.Team_Soccar_TA",
+	"Archetypes.Ball.Ball_Default":                                          "TAGame.Ball_TA",
+	"Archetypes.Car.Car_Default":                                            "TAGame.Car_TA",
+	"Archetypes.CarComponents.CarComponent_Boost":                           "TAGame.CarComponent_Boost_TA",
+	"Archetypes.CarComponents.CarComponent_Dodge":                           "TAGame.CarComponent_Dodge_TA",
+	"Archetypes.CarComponents.CarComponent_DoubleJump":                      "TAGame.CarComponent_DoubleJump_TA",
+	"Archetypes.CarComponents.CarComponent_FlipCar":                         "TAGame.CarComponent_FlipCar_TA",
+	"Archetypes.CarComponents.CarComponent_Jump":                            "TAGame.CarComponent_Jump_TA",
+	"Archetypes.GameEvent.GameEvent_Soccar":                                 "TAGame.GameEvent_Soccar_TA",
+	"Archetypes.Teams.Team0":                                                "TAGame.Team_Soccar_TA",
+	"Archetypes.Teams.Team1":                                                "TAGame.Team_Soccar_TA",
+	"GameInfo_Soccar.GameInfo.GameInfo_Soccar:GameReplicationInfoArchetype": "TAGame.GRI_TA",
 }
 
 type attributeLookupBuilder struct {

@@ -19,6 +19,7 @@ import (
 type Parser struct {
 	dataSource    source.Source
 	crcValidation CRCValidationMode
+	decodeNetwork bool
 }
 
 // CRCValidationMode controls when replay section CRCs are checked.
@@ -36,6 +37,8 @@ const (
 // ParseOptions configures replay parsing.
 type ParseOptions struct {
 	CRCValidation CRCValidationMode
+	// DecodeNetwork decodes frames and actor replications. It is disabled by default.
+	DecodeNetwork bool
 }
 
 // HeaderData is used to pull binary header data from the replay file
@@ -69,7 +72,11 @@ func ParseWithOptions(dataSource source.Source, options ParseOptions) (*rocket.R
 		return nil, errors.New("source reader is nil")
 	}
 
-	parser := &Parser{dataSource: dataSource, crcValidation: options.CRCValidation}
+	parser := &Parser{
+		dataSource:    dataSource,
+		crcValidation: options.CRCValidation,
+		decodeNetwork: options.DecodeNetwork,
+	}
 	return parser.parseFile(reader)
 }
 
@@ -113,11 +120,17 @@ func (parser *Parser) parseFile(reader io.Reader) (*rocket.Replay, error) {
 		return nil, fmt.Errorf("header properties: %w", err)
 	}
 
+	replay.Properties = properties
 	if err := parser.parseBody(reader, replay); err != nil {
 		return nil, fmt.Errorf("body: %w", err)
 	}
 
-	replay.Properties = properties
+	if parser.decodeNetwork {
+		replay.Frames, err = decodeNetwork(replay)
+		if err != nil {
+			return nil, fmt.Errorf("network: %w", err)
+		}
+	}
 
 	return replay, nil
 }

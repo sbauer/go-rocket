@@ -8,6 +8,7 @@ type Replay struct {
 	Levels       []string
 	Keyframes    []*Keyframe
 	NetworkData  []byte // Raw, undecoded network stream.
+	Frames       []NetworkFrame
 	DebugData    []*DebugData
 	Tickmarks    []*Tickmark
 	Packages     []string
@@ -32,6 +33,54 @@ type DebugData struct {
 type Tickmark struct {
 	Frame       int32
 	Description string
+}
+
+// NetworkFrame contains actor replications in their original stream order.
+type NetworkFrame struct {
+	Time   float32
+	Delta  float32
+	Actors []ActorReplication
+}
+
+// ActorReplication describes one spawn, deletion, or set of attribute updates.
+// Actor IDs can be reused after deletion.
+type ActorReplication struct {
+	ActorID    int32
+	Spawn      *SpawnedActor
+	Deleted    bool
+	Attributes []AttributeUpdate
+}
+
+// SpawnedActor identifies a new actor and any initial position and rotation.
+// NameIndex is absent in replay versions that do not encode an actor name.
+type SpawnedActor struct {
+	NameIndex   *int32
+	ObjectIndex int32
+	Location    *Vector3i
+	Rotation    *Rotation
+}
+
+// AttributeUpdate identifies an attribute in Replay.Objects and its decoded value.
+type AttributeUpdate struct {
+	StreamID    int32
+	ObjectIndex int32
+	Value       interface{}
+}
+
+// Vector3i is an integer position in the network stream.
+type Vector3i struct {
+	X, Y, Z int32
+}
+
+// Rotation contains the optional byte-packed rotation axes.
+type Rotation struct {
+	Yaw, Pitch, Roll *int8
+}
+
+// ActiveActor identifies an actor reference and its active flag.
+type ActiveActor struct {
+	Active  bool
+	ActorID int32
 }
 
 // ClassIndex maps a class name to its index in Replay.Objects.
