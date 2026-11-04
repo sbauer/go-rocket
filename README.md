@@ -40,6 +40,10 @@ func main() {
 
 Use `source.FromBytes(data)` instead to parse an in-memory replay.
 
+To decode network frames, use `parsers.ParseWithOptions` with
+`parsers.ParseOptions{DecodeNetwork: true}`. Network decoding is experimental
+and returns an error when it encounters an unsupported attribute.
+
 ## Available data
 
 - Header versions and replay properties, including scores, player stats, and goals.
@@ -47,6 +51,7 @@ Use `source.FromBytes(data)` instead to parse an in-memory replay.
 - Levels, keyframes, debug data, tickmarks, packages, objects, and names.
 - Class indices and network caches.
 - The raw, undecoded network stream in `Replay.NetworkData`.
+- When requested, `Replay.Frames` contains actor spawns, deletions, and attribute updates in stream order.
 
 Replay text is decoded as UTF-16 or Windows-1252; identifiers use UTF-8.
 Strings are returned without their serialized null terminators.
@@ -57,7 +62,7 @@ to skip checks, or `CRCValidationOnParseError` to check a section only if parsin
 
 ## Limitations
 
-- Network frames and actor data are not decoded.
+- Network decoding currently supports only a small set of attribute types.
 - Some property types and replay version quirks are not supported.
 
 ## Tests
