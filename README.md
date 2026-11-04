@@ -1,7 +1,7 @@
 # Go Rocket
 
 Go Rocket is an experimental Go library for reading Rocket League replay files.
-It parses replay metadata and body tables, but does not yet decode gameplay frames.
+It parses replay metadata and body tables, with optional gameplay frame decoding.
 
 ## Installation
 
@@ -41,8 +41,11 @@ func main() {
 Use `source.FromBytes(data)` instead to parse an in-memory replay.
 
 To decode network frames, use `parsers.ParseWithOptions` with
-`parsers.ParseOptions{DecodeNetwork: true}`. Network decoding is experimental
-and returns an error when it encounters an unsupported attribute.
+`parsers.ParseOptions{DecodeNetwork: true}`. This retains `Replay.NetworkData`
+and populates `Replay.Frames`; the default `Parse` skips frame decoding.
+Attribute names can be resolved through `Replay.Objects[update.ObjectIndex]`,
+and `update.Value` contains a Go primitive or a typed value from the `rocket`
+package.
 
 ## Available data
 
@@ -62,7 +65,9 @@ to skip checks, or `CRCValidationOnParseError` to check a section only if parsin
 
 ## Limitations
 
-- Network decoding currently supports only a small set of attribute types.
+- Network decoding supports common physics, player ID, loadout, and match
+  attributes, but some classes, attributes, and version-specific formats are
+  still unsupported. Unsupported data returns an error rather than being skipped.
 - Some property types and replay version quirks are not supported.
 
 ## Tests

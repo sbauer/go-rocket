@@ -165,7 +165,7 @@ func (decoder *networkDecoder) readActor() (rocket.ActorReplication, error) {
 			return rocket.ActorReplication{}, fmt.Errorf("actor %d has unknown stream ID %d", actorID, stream)
 		}
 		name := decoder.replay.Objects[objectIndex]
-		value, err := decodeAttribute(decoder.reader, name)
+		value, err := decoder.readAttribute(name)
 		if err != nil {
 			return rocket.ActorReplication{}, fmt.Errorf("actor %d attribute %q: %w", actorID, name, err)
 		}

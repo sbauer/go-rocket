@@ -61,6 +61,7 @@ type SpawnedActor struct {
 }
 
 // AttributeUpdate identifies an attribute in Replay.Objects and its decoded value.
+// Values are Go primitives or the network attribute types in this package.
 type AttributeUpdate struct {
 	StreamID    int32
 	ObjectIndex int32
@@ -77,7 +78,7 @@ type Rotation struct {
 	Yaw, Pitch, Roll *int8
 }
 
-// ActiveActor identifies an actor reference and its active flag.
+// ActiveActor contains a flag and a 32-bit actor or object reference.
 type ActiveActor struct {
 	Active  bool
 	ActorID int32
