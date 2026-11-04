@@ -50,7 +50,8 @@ package.
 ## Available data
 
 - Header versions and replay properties, including scores, player stats, and goals.
-  Scalar properties are in `Property.Value`; array elements are in `Property.Groups`.
+  Scalar and nested `StructProperty` values are in `Property.Value`; array
+  elements are in `Property.Groups`.
 - Levels, keyframes, debug data, tickmarks, packages, objects, and names.
 - Class indices and network caches.
 - The raw, undecoded network stream in `Replay.NetworkData`.
@@ -73,3 +74,6 @@ to skip checks, or `CRCValidationOnParseError` to check a section only if parsin
 ## Tests
 
 Run `go test ./...` to run the test suite, which includes the replays in `samples/`.
+Sources and coverage for the additional fixtures are documented in
+[`samples/boxcars/README.md`](samples/boxcars/README.md). With Go 1.18 or newer,
+the parser fuzz target can be run with `go test ./parsers -fuzz FuzzParseReplay`.

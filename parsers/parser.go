@@ -20,7 +20,10 @@ type Parser struct {
 	dataSource    source.Source
 	crcValidation CRCValidationMode
 	decodeNetwork bool
+	propertyDepth int
 }
+
+const maxPropertyDepth = 128
 
 // CRCValidationMode controls when replay section CRCs are checked.
 type CRCValidationMode uint8
@@ -169,6 +172,12 @@ func (parser *Parser) parseBody(reader io.Reader, replay *rocket.Replay) error {
 }
 
 func (parser *Parser) parseProperties(reader io.Reader, replay *rocket.Replay) (map[string]*rocket.Property, error) {
+	if parser.propertyDepth >= maxPropertyDepth {
+		return nil, fmt.Errorf("property nesting exceeds %d levels", maxPropertyDepth)
+	}
+	parser.propertyDepth++
+	defer func() { parser.propertyDepth-- }()
+
 	properties := make(map[string]*rocket.Property)
 
 	for {
@@ -223,9 +232,20 @@ func (parser *Parser) parseProperty(reader io.Reader, replay *rocket.Replay) (*r
 		Type: typeName,
 	}
 
-	if typeName == "ArrayProperty" {
+	switch typeName {
+	case "ArrayProperty":
 		prop.Groups, err = parser.parsePropertyGroups(reader, replay)
-	} else {
+	case "StructProperty":
+		var structName string
+		structName, err = readIdentifier(reader)
+		if err == nil {
+			var fields map[string]*rocket.Property
+			fields, err = parser.parseProperties(reader, replay)
+			if err == nil {
+				prop.Value = rocket.StructProperty{Name: structName, Fields: fields}
+			}
+		}
+	default:
 		prop.Value, err = parser.parsePropertyValue(reader, typeName)
 	}
 

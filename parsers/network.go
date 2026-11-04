@@ -232,7 +232,8 @@ func (decoder *networkDecoder) readSpawn() (*rocket.SpawnedActor, *classAttribut
 func spawnTrajectory(class string) (location, rotation bool, err error) {
 	for class != "" {
 		switch class {
-		case "TAGame.CrowdActor_TA", "TAGame.CrowdManager_TA", "TAGame.VehiclePickup_Boost_TA":
+		case "TAGame.CrowdActor_TA", "TAGame.CrowdManager_TA",
+			"TAGame.HauntedBallTrapTrigger_TA", "TAGame.VehiclePickup_Boost_TA":
 			return false, false, nil
 		case "TAGame.RBActor_TA":
 			return true, true, nil

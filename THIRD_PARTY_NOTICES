@@ -1,4 +1,5 @@
-Network attribute names and wire format details were informed by Boxcars
+Network attribute names and wire format details were informed by Boxcars, and
+the replay fixtures in samples/boxcars were obtained from its test corpus
 (https://github.com/nickbabcock/boxcars), by Nick Babcock and contributors.
 Boxcars is distributed under the following license:
 

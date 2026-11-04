@@ -120,6 +120,60 @@ func TestAttributeLookupUnambiguousParentAndOverrides(t *testing.T) {
 	}
 }
 
+func TestAttributeLookupAirActivateInheritance(t *testing.T) {
+	for _, tt := range []struct {
+		name            string
+		withAirActivate bool
+	}{
+		{"older cache", false},
+		{"newer cache", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			replay := &rocket.Replay{
+				Objects: []string{
+					"Core.Object", "Engine.Actor", "TAGame.CarComponent_TA", "TAGame.CarComponent_AirActivate_TA",
+					"TAGame.CarComponent_Dodge_TA", "TAGame.CarComponent_DoubleJump_TA",
+					"TAGame.CarComponent_TA:ReplicatedActive", "TAGame.CarComponent_AirActivate_TA:AirActivateCount",
+				},
+				NetCache: []*rocket.ClassNetCache{
+					{ObjectIndex: 0, CacheID: 0},
+					{ObjectIndex: 1, ParentID: 0, CacheID: 20},
+					{ObjectIndex: 2, ParentID: 20, CacheID: 23, Properties: []*rocket.NetCacheProperty{{ObjectIndex: 6, StreamID: 22}}},
+					{ObjectIndex: 4, ParentID: 23, CacheID: 25},
+					{ObjectIndex: 5, ParentID: 23, CacheID: 24},
+				},
+			}
+			if tt.withAirActivate {
+				replay.NetCache = append(replay.NetCache, &rocket.ClassNetCache{
+					ObjectIndex: 3, ParentID: 23, CacheID: 24,
+					Properties: []*rocket.NetCacheProperty{{ObjectIndex: 7, StreamID: 23}},
+				})
+				replay.NetCache[3].ParentID = 24
+				replay.NetCache[4].ParentID = 24
+			}
+			lookup, err := newAttributeLookup(replay)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"TAGame.CarComponent_Dodge_TA", "TAGame.CarComponent_DoubleJump_TA"} {
+				attributes, err := lookup.forClass(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertAttribute(t, replay, attributes, 22, "TAGame.CarComponent_TA:ReplicatedActive")
+				if tt.withAirActivate {
+					assertAttribute(t, replay, attributes, 23, "TAGame.CarComponent_AirActivate_TA:AirActivateCount")
+					if attributes.maxStreamID != 23 {
+						t.Errorf("%s: maximum stream is %d, want 23", name, attributes.maxStreamID)
+					}
+				} else if _, ok := attributes.streams[23]; ok || attributes.maxStreamID != 22 {
+					t.Errorf("%s: unexpected inherited attributes: %+v", name, attributes)
+				}
+			}
+		})
+	}
+}
+
 func TestAttributeLookupRejectsInvalidHierarchy(t *testing.T) {
 	tests := []struct {
 		name   string
