@@ -400,6 +400,22 @@ func TestPropertyReportsTruncatedData(t *testing.T) {
 	}
 }
 
+func TestQWordPropertyPreservesUnsignedValues(t *testing.T) {
+	for _, value := range []uint64{123, uint64(1) << 63, ^uint64(0)} {
+		t.Run(strconv.FormatUint(value, 10), func(t *testing.T) {
+			var data bytes.Buffer
+			writeValue(t, &data, value)
+			got, err := (&Parser{}).parsePropertyValue(&data, "QWordProperty", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != value {
+				t.Fatalf("got %#v (%T), want %d", got, got, value)
+			}
+		})
+	}
+}
+
 func TestPropertyGroupReportsFirstError(t *testing.T) {
 	var data bytes.Buffer
 	writeValue(t, &data, int32(2))
@@ -425,7 +441,7 @@ func TestNestedStructProperties(t *testing.T) {
 	writeProperty("PlayerID", "StructProperty")
 	writeString(t, &data, "UniqueNetId")
 	writeProperty("Uid", "QWordProperty")
-	writeValue(t, &data, int64(123))
+	writeValue(t, &data, uint64(123))
 	writeProperty("Nested", "StructProperty")
 	writeString(t, &data, "Details")
 	writeProperty("Score", "IntProperty")
@@ -439,7 +455,7 @@ func TestNestedStructProperties(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, ok := properties["PlayerID"].Value.(rocket.StructProperty)
-	if !ok || id.Name != "UniqueNetId" || id.Fields["Uid"].Value != int64(123) {
+	if !ok || id.Name != "UniqueNetId" || id.Fields["Uid"].Value != uint64(123) {
 		t.Fatalf("unexpected player ID: %+v", properties["PlayerID"])
 	}
 	nested, ok := id.Fields["Nested"].Value.(rocket.StructProperty)
