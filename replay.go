@@ -2,20 +2,21 @@ package rocket
 
 // Replay contains the replay data
 type Replay struct {
-	HeaderInfo   *ReplayHeader
-	Version      string
-	Properties   map[string]*Property
-	Levels       []string
-	Keyframes    []*Keyframe
-	NetworkData  []byte // Raw, undecoded network stream.
-	Frames       []NetworkFrame
-	DebugData    []*DebugData
-	Tickmarks    []*Tickmark
-	Packages     []string
-	Objects      []string
-	Names        []string
-	ClassIndices []*ClassIndex
-	NetCache     []*ClassNetCache
+	HeaderInfo        *ReplayHeader
+	Version           string
+	Properties        map[string]*Property // Last occurrence of each property name.
+	OrderedProperties []*Property          // All properties in replay order, including duplicates.
+	Levels            []string
+	Keyframes         []*Keyframe
+	NetworkData       []byte // Raw, undecoded network stream.
+	Frames            []NetworkFrame
+	DebugData         []*DebugData
+	Tickmarks         []*Tickmark
+	Packages          []string
+	Objects           []string
+	Names             []string
+	ClassIndices      []*ClassIndex
+	NetCache          []*ClassNetCache
 }
 
 type Keyframe struct {

@@ -11,6 +11,7 @@ against rrrocket 0.11.8.
 
 | File | Version | Frames | Coverage |
 | --- | --- | ---: | --- |
+| `no-frames.replay` | 0/0/absent | n/a | Legacy header without frame data |
 | `07e9.replay` | 868/11/absent | 319 | 2016 Hoops |
 | `7083.replay` | 868/20/2 | 8,346 | Hoops, Switch and split-screen IDs |
 | `d52eb.replay` | 868/23/8 | 17,815 | Legacy PsyNet IDs |
