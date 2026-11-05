@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sbauer/go-rocket"
 	"github.com/sbauer/go-rocket/source"
 )
 
@@ -181,6 +182,55 @@ func TestParseRejectsNegativeSectionSizes(t *testing.T) {
 	}
 }
 
+func TestAdditionalFixturesRejectMalformedData(t *testing.T) {
+	for _, sample := range []struct {
+		name        string
+		classOffset int
+	}{
+		{"07e9", 16},
+		{"MaxNumJumps", 20},
+	} {
+		t.Run(sample.name, func(t *testing.T) {
+			data, err := ioutil.ReadFile("../samples/boxcars/" + sample.name + ".replay")
+			if err != nil {
+				t.Fatal(err)
+			}
+			bodyStart := 8 + int(binary.LittleEndian.Uint32(data))
+			check := func(name string, input []byte, want string, truncation bool) {
+				t.Helper()
+				t.Run(name, func(t *testing.T) {
+					_, err := ParseWithOptions(source.FromBytes(input), ParseOptions{
+						CRCValidation: CRCValidationNever, DecodeNetwork: true,
+					})
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Fatalf("got %v, want an error containing %q", err, want)
+					}
+					if truncation && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+						t.Fatalf("got %v, want a truncation error", err)
+					}
+				})
+			}
+			check("truncated header", data[:bodyStart-1], "header", true)
+			check("truncated body", data[:len(data)-1], "body", true)
+			for _, tt := range []struct {
+				name   string
+				offset int
+				value  uint32
+				want   string
+			}{
+				{"oversized string", sample.classOffset, 0x7fffffff, "header"},
+				{"oversized UTF-16 string", sample.classOffset, 0x80000000, "header"},
+				{"negative level count", bodyStart + 8, 0xffffffff, "levels"},
+				{"oversized level count", bodyStart + 8, 0x7fffffff, "levels"},
+			} {
+				mutated := append([]byte(nil), data...)
+				binary.LittleEndian.PutUint32(mutated[tt.offset:], tt.value)
+				check(tt.name, mutated, tt.want, false)
+			}
+		})
+	}
+}
+
 func TestParseValidatesSectionCRCs(t *testing.T) {
 	data, err := ioutil.ReadFile("../samples/first.replay")
 	if err != nil {
@@ -341,6 +391,92 @@ func TestPropertyGroupReportsFirstError(t *testing.T) {
 
 	if _, err := (&Parser{}).parsePropertyGroups(&data, nil); err == nil {
 		t.Fatal("expected an error from the first group")
+	}
+}
+
+func TestNestedStructProperties(t *testing.T) {
+	var data bytes.Buffer
+	writeProperty := func(name, kind string) {
+		writeString(t, &data, name)
+		writeString(t, &data, kind)
+		writeValue(t, &data, uint32(0))
+		writeValue(t, &data, uint32(0))
+	}
+	writeProperty("PlayerID", "StructProperty")
+	writeString(t, &data, "UniqueNetId")
+	writeProperty("Uid", "QWordProperty")
+	writeValue(t, &data, int64(123))
+	writeProperty("Nested", "StructProperty")
+	writeString(t, &data, "Details")
+	writeProperty("Score", "IntProperty")
+	writeValue(t, &data, int32(7))
+	writeString(t, &data, "None")
+	writeString(t, &data, "None")
+	writeString(t, &data, "None")
+
+	properties, err := (&Parser{}).parseProperties(&data, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, ok := properties["PlayerID"].Value.(rocket.StructProperty)
+	if !ok || id.Name != "UniqueNetId" || id.Fields["Uid"].Value != int64(123) {
+		t.Fatalf("unexpected player ID: %+v", properties["PlayerID"])
+	}
+	nested, ok := id.Fields["Nested"].Value.(rocket.StructProperty)
+	if !ok || nested.Name != "Details" || nested.Fields["Score"].Value != int32(7) {
+		t.Fatalf("unexpected nested properties: %+v", id.Fields["Nested"])
+	}
+}
+
+func TestPropertyNestingLimit(t *testing.T) {
+	nested := func(depth int) *bytes.Buffer {
+		var data bytes.Buffer
+		for i := 0; i < depth; i++ {
+			writeString(t, &data, "Nested")
+			writeString(t, &data, "StructProperty")
+			writeValue(t, &data, uint32(0))
+			writeValue(t, &data, uint32(0))
+			writeString(t, &data, "NestedType")
+		}
+		for i := 0; i <= depth; i++ {
+			writeString(t, &data, "None")
+		}
+		return &data
+	}
+	if _, err := (&Parser{}).parseProperties(nested(maxPropertyDepth-1), nil); err != nil {
+		t.Fatalf("maximum supported nesting: %v", err)
+	}
+	_, err := (&Parser{}).parseProperties(nested(maxPropertyDepth), nil)
+	if err == nil || !strings.Contains(err.Error(), "property nesting exceeds") {
+		t.Fatalf("got %v, want a nesting error", err)
+	}
+}
+
+func TestNestedStructRejectsTruncation(t *testing.T) {
+	var data bytes.Buffer
+	writeString(t, &data, "PlayerID")
+	writeString(t, &data, "StructProperty")
+	writeValue(t, &data, uint32(0))
+	writeValue(t, &data, uint32(0))
+	missingName := append([]byte(nil), data.Bytes()...)
+	writeString(t, &data, "UniqueNetId")
+	missingFields := append([]byte(nil), data.Bytes()...)
+	writeString(t, &data, "Uid")
+	writeString(t, &data, "QWordProperty")
+	writeValue(t, &data, uint32(8))
+	writeValue(t, &data, uint32(0))
+	writeValue(t, &data, uint32(1))
+
+	for name, input := range map[string][]byte{
+		"missing struct name": missingName,
+		"missing fields":      missingFields,
+		"truncated field":     data.Bytes(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := (&Parser{}).parseProperties(bytes.NewReader(input), nil); err == nil {
+				t.Fatal("expected a truncation error")
+			}
+		})
 	}
 }
 

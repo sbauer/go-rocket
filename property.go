@@ -12,3 +12,9 @@ type Property struct {
 type PropertyGroup struct {
 	Properties map[string]*Property
 }
+
+// StructProperty contains a named, nested set of replay properties.
+type StructProperty struct {
+	Name   string
+	Fields map[string]*Property
+}
