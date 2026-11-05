@@ -20,4 +20,9 @@ against rrrocket 0.11.8.
 | `dropshot_rumble.replay` | 868/32/10 | 468 | Dropshot Rumble |
 | `heatseeker.replay` | 868/32/10 | 726 | Heatseeker |
 | `3cdd.replay` | 868/32/10 | 753 | Snow Day Territory and a Rumble freeze pickup |
+| `2974.replay` | 868/32/11 | 425 | Basketball with luminous-airplane ball |
+| `9065.replay` | 868/32/10 | 725 | Fire Ball |
+| `beach_ball.replay` | 868/32/10 | 438 | Beach Ball |
+| `b62e.replay` | 868/32/10 | 1,453 | Tutorial Goalie |
+| `6796.replay` | 868/32/10 | 248 | Territory |
 | `MaxNumJumps.replay` | 868/34/12 | 6,065 | 2026 format, nested player IDs and Epic IDs |
