@@ -1,14 +1,17 @@
 package rocket
 
-// Team is not currently used
+// Team contains a team's match result and players.
 type Team struct {
-	Name     string
-	Score    int
-	IsWinner bool
-	Players  []string
+	Name        string
+	Index       int
+	Score       int
+	HasScore    bool
+	IsWinner    bool
+	Players     []string
+	PlayerStats []PlayerStat
 }
 
-// NewTeam is not currently used
+// NewTeam creates an empty team.
 func NewTeam() *Team {
 	return &Team{}
 }

@@ -57,6 +57,11 @@ func Parse(dataSource source.Source) (*rocket.Replay, error) {
 	return ParseWithOptions(dataSource, ParseOptions{})
 }
 
+// ParseFile parses a replay from a file using the supplied options.
+func ParseFile(fileName string, options ParseOptions) (*rocket.Replay, error) {
+	return ParseWithOptions(source.FromFile(fileName), options)
+}
+
 // ParseWithOptions processes a replay file using the supplied options.
 func ParseWithOptions(dataSource source.Source, options ParseOptions) (*rocket.Replay, error) {
 	if options.CRCValidation > CRCValidationOnParseError {
