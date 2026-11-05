@@ -66,6 +66,9 @@ package.
 - Class indices and network caches.
 - The raw, undecoded network stream in `Replay.NetworkData`.
 - When requested, `Replay.Frames` contains actor spawns, deletions, and attribute updates in stream order.
+- `Replay.Trajectories()` derives time- and frame-indexed position samples for
+  car and ball actors from decoded frames. It records only known spawn and
+  rigid-body positions; actor ID reuse starts a new trajectory.
 
 Replay text is decoded as UTF-16 or Windows-1252; identifiers use UTF-8.
 Strings are returned without their serialized null terminators.
