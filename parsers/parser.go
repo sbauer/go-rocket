@@ -115,7 +115,7 @@ func (parser *Parser) parseFile(reader io.Reader) (*rocket.Replay, error) {
 		return nil, fmt.Errorf("header: %w", err)
 	}
 
-	properties, err := parser.parseProperties(headerReader, replay)
+	properties, orderedProperties, err := parser.parseProperties(headerReader, replay)
 	if err != nil {
 		if crcErr := parser.headerCRCErrorOnParseFailure(headerCRC, headerData, err); crcErr != nil {
 			return nil, crcErr
@@ -124,6 +124,7 @@ func (parser *Parser) parseFile(reader io.Reader) (*rocket.Replay, error) {
 	}
 
 	replay.Properties = properties
+	replay.OrderedProperties = orderedProperties
 	if err := parser.parseBody(reader, replay); err != nil {
 		return nil, fmt.Errorf("body: %w", err)
 	}
@@ -171,20 +172,21 @@ func (parser *Parser) parseBody(reader io.Reader, replay *rocket.Replay) error {
 	return nil
 }
 
-func (parser *Parser) parseProperties(reader io.Reader, replay *rocket.Replay) (map[string]*rocket.Property, error) {
+func (parser *Parser) parseProperties(reader io.Reader, replay *rocket.Replay) (map[string]*rocket.Property, []*rocket.Property, error) {
 	if parser.propertyDepth >= maxPropertyDepth {
-		return nil, fmt.Errorf("property nesting exceeds %d levels", maxPropertyDepth)
+		return nil, nil, fmt.Errorf("property nesting exceeds %d levels", maxPropertyDepth)
 	}
 	parser.propertyDepth++
 	defer func() { parser.propertyDepth-- }()
 
 	properties := make(map[string]*rocket.Property)
+	orderedProperties := make([]*rocket.Property, 0)
 
 	for {
 		prop, err := parser.parseProperty(reader, replay)
 
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		if prop == nil {
@@ -192,9 +194,10 @@ func (parser *Parser) parseProperties(reader io.Reader, replay *rocket.Replay) (
 		}
 
 		properties[prop.Name] = prop
+		orderedProperties = append(orderedProperties, prop)
 	}
 
-	return properties, nil
+	return properties, orderedProperties, nil
 }
 
 func (parser *Parser) parseProperty(reader io.Reader, replay *rocket.Replay) (*rocket.Property, error) {
@@ -240,13 +243,16 @@ func (parser *Parser) parseProperty(reader io.Reader, replay *rocket.Replay) (*r
 		structName, err = readIdentifier(reader)
 		if err == nil {
 			var fields map[string]*rocket.Property
-			fields, err = parser.parseProperties(reader, replay)
+			var orderedFields []*rocket.Property
+			fields, orderedFields, err = parser.parseProperties(reader, replay)
 			if err == nil {
-				prop.Value = rocket.StructProperty{Name: structName, Fields: fields}
+				prop.Value = rocket.StructProperty{Name: structName, Fields: fields, OrderedFields: orderedFields}
 			}
 		}
 	default:
-		prop.Value, err = parser.parsePropertyValue(reader, typeName)
+		legacy := replay != nil && replay.HeaderInfo != nil &&
+			replay.HeaderInfo.EngineVersion == 0 && replay.HeaderInfo.LicenseeVersion == 0
+		prop.Value, err = parser.parsePropertyValue(reader, typeName, legacy)
 	}
 
 	if err != nil {
@@ -265,7 +271,7 @@ func (parser *Parser) parsePropertyGroups(reader io.Reader, replay *rocket.Repla
 	groups := make([]*rocket.PropertyGroup, 0)
 	for index := int32(0); index < totalGroups; index++ {
 		group := &rocket.PropertyGroup{}
-		group.Properties, err = parser.parseProperties(reader, replay)
+		group.Properties, group.OrderedProperties, err = parser.parseProperties(reader, replay)
 		if err != nil {
 			return nil, fmt.Errorf("group %d: %w", index, err)
 		}
@@ -275,7 +281,7 @@ func (parser *Parser) parsePropertyGroups(reader io.Reader, replay *rocket.Repla
 	return groups, nil
 }
 
-func (parser *Parser) parsePropertyValue(reader io.Reader, typeName string) (interface{}, error) {
+func (parser *Parser) parsePropertyValue(reader io.Reader, typeName string, legacy bool) (interface{}, error) {
 	switch typeName {
 	case "IntProperty":
 		var intValue int32
@@ -288,6 +294,9 @@ func (parser *Parser) parsePropertyValue(reader io.Reader, typeName string) (int
 		err := readAsType(reader, &float)
 		return float, err
 	case "ByteProperty":
+		if legacy {
+			return readString(reader)
+		}
 		first, err := readIdentifier(reader)
 		if err != nil {
 			return nil, err
@@ -305,6 +314,11 @@ func (parser *Parser) parsePropertyValue(reader io.Reader, typeName string) (int
 		}
 		return first + "|" + second, nil
 	case "BoolProperty":
+		if legacy {
+			var value [4]byte
+			err := readAsType(reader, &value)
+			return value[0] != 0, err
+		}
 		var value byte
 		err := readAsType(reader, &value)
 		return value != 0, err

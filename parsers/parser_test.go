@@ -351,7 +351,7 @@ func TestPropertyNameContainingNone(t *testing.T) {
 	writeValue(t, &data, int32(42))
 	writeString(t, &data, "None")
 
-	properties, err := (&Parser{}).parseProperties(&data, nil)
+	properties, _, err := (&Parser{}).parseProperties(&data, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestPropertyNameContainingNone(t *testing.T) {
 func TestPropertyReportsTruncatedData(t *testing.T) {
 	for _, kind := range []string{"IntProperty", "FloatProperty", "BoolProperty", "QWordProperty"} {
 		t.Run(kind, func(t *testing.T) {
-			_, err := (&Parser{}).parsePropertyValue(bytes.NewReader(nil), kind)
+			_, err := (&Parser{}).parsePropertyValue(bytes.NewReader(nil), kind, false)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -414,7 +414,7 @@ func TestNestedStructProperties(t *testing.T) {
 	writeString(t, &data, "None")
 	writeString(t, &data, "None")
 
-	properties, err := (&Parser{}).parseProperties(&data, nil)
+	properties, _, err := (&Parser{}).parseProperties(&data, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,10 +443,10 @@ func TestPropertyNestingLimit(t *testing.T) {
 		}
 		return &data
 	}
-	if _, err := (&Parser{}).parseProperties(nested(maxPropertyDepth-1), nil); err != nil {
+	if _, _, err := (&Parser{}).parseProperties(nested(maxPropertyDepth-1), nil); err != nil {
 		t.Fatalf("maximum supported nesting: %v", err)
 	}
-	_, err := (&Parser{}).parseProperties(nested(maxPropertyDepth), nil)
+	_, _, err := (&Parser{}).parseProperties(nested(maxPropertyDepth), nil)
 	if err == nil || !strings.Contains(err.Error(), "property nesting exceeds") {
 		t.Fatalf("got %v, want a nesting error", err)
 	}
@@ -473,7 +473,7 @@ func TestNestedStructRejectsTruncation(t *testing.T) {
 		"truncated field":     data.Bytes(),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := (&Parser{}).parseProperties(bytes.NewReader(input), nil); err == nil {
+			if _, _, err := (&Parser{}).parseProperties(bytes.NewReader(input), nil); err == nil {
 				t.Fatal("expected a truncation error")
 			}
 		})
@@ -484,9 +484,225 @@ func TestBytePropertyWithoutEnum(t *testing.T) {
 	var data bytes.Buffer
 	writeString(t, &data, "None")
 	data.WriteByte(7)
-	value, err := (&Parser{}).parsePropertyValue(&data, "ByteProperty")
+	value, err := (&Parser{}).parsePropertyValue(&data, "ByteProperty", false)
 	if err != nil || value != byte(7) {
 		t.Fatalf("got %v, %v; want byte value 7", value, err)
+	}
+}
+
+func TestParseVersionedHeaderProperties(t *testing.T) {
+	tests := []struct {
+		name         string
+		major, minor uint32
+		legacy       bool
+	}{
+		{"legacy 0/0", 0, 0, true},
+		{"zero engine only", 0, 1, false},
+		{"zero licensee only", 1, 0, false},
+		{"standard without net version", 868, 17, false},
+		{"standard with net version", 868, 18, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var header bytes.Buffer
+			writeValue(t, &header, tt.major)
+			writeValue(t, &header, tt.minor)
+			if tt.major > 865 && tt.minor > 17 {
+				writeValue(t, &header, uint32(10))
+			}
+			writeString(t, &header, "Replay")
+			writeBool := func(name string, value byte) {
+				writePropertyHeader(t, &header, name, "BoolProperty")
+				writeValue(t, &header, value)
+				if tt.legacy {
+					header.Write([]byte{0x80, 2, 3})
+				}
+			}
+			writeBool("Ready", 1)
+			writeBool("Spectator", 0)
+			writePropertyHeader(t, &header, "Platform", "ByteProperty")
+			var platform interface{} = "OnlinePlatform|OnlinePlatform_Epic"
+			if tt.legacy {
+				writeValue(t, &header, int32(5))
+				header.Write([]byte{'C', 'a', 'f', 0xe9, 0})
+				platform = "Caf\u00e9"
+			} else {
+				writeString(t, &header, "OnlinePlatform")
+				writeString(t, &header, "OnlinePlatform_Epic")
+			}
+			writePropertyHeader(t, &header, "Players", "ArrayProperty")
+			writeValue(t, &header, int32(1))
+			writeBool("Bot", 0)
+			writePropertyHeader(t, &header, "Kind", "ByteProperty")
+			writeString(t, &header, "None")
+			var kind interface{} = "None"
+			if !tt.legacy {
+				writeValue(t, &header, byte(7))
+				kind = byte(7)
+			}
+			writePropertyHeader(t, &header, "Details", "StructProperty")
+			writeString(t, &header, "PlayerDetails")
+			writeBool("Valid", 1)
+			writePropertyHeader(t, &header, "NestedKind", "ByteProperty")
+			writeString(t, &header, "Mode")
+			var nestedKind interface{} = "Mode"
+			if !tt.legacy {
+				writeString(t, &header, "Value")
+				nestedKind = "Mode|Value"
+			}
+			writeString(t, &header, "None")
+			writeString(t, &header, "None")
+			writePropertyHeader(t, &header, "After", "IntProperty")
+			writeValue(t, &header, int32(42))
+			writeString(t, &header, "None")
+
+			replay, err := Parse(source.FromBytes(replayWithHeader(t, &header)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, want := range map[string]interface{}{
+				"Ready": true, "Spectator": false, "Platform": platform, "After": int32(42),
+			} {
+				if property := replay.Properties[name]; property == nil || property.Value != want {
+					t.Errorf("%s: got %+v, want %v", name, property, want)
+				}
+			}
+			players := replay.Properties["Players"]
+			if players == nil || len(players.Groups) != 1 {
+				t.Fatalf("unexpected players: %+v", players)
+			}
+			group := players.Groups[0]
+			bot, groupKind := group.Properties["Bot"], group.Properties["Kind"]
+			if bot == nil || bot.Value != false || groupKind == nil || groupKind.Value != kind {
+				t.Fatalf("unexpected nested properties: %+v", group.Properties)
+			}
+			detailsProperty := group.Properties["Details"]
+			if detailsProperty == nil {
+				t.Fatal("missing Details property")
+			}
+			details, ok := detailsProperty.Value.(rocket.StructProperty)
+			if !ok || details.Name != "PlayerDetails" {
+				t.Fatalf("unexpected nested struct: %+v", detailsProperty)
+			}
+			valid, structKind := details.Fields["Valid"], details.Fields["NestedKind"]
+			if valid == nil || valid.Value != true || structKind == nil || structKind.Value != nestedKind {
+				t.Fatalf("unexpected nested struct fields: %+v", details.Fields)
+			}
+		})
+	}
+}
+
+func TestLegacyPropertyValuesRejectTruncation(t *testing.T) {
+	for _, tt := range []struct {
+		name, kind string
+		data       []byte
+	}{
+		{"boolean", "BoolProperty", []byte{1, 0, 0}},
+		{"byte string", "ByteProperty", []byte{4, 0, 0, 0, 'a', 0}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := (&Parser{}).parsePropertyValue(bytes.NewReader(tt.data), tt.kind, true)
+			if !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("got %v, want a truncation error", err)
+			}
+		})
+	}
+}
+
+func TestParsePreservesDuplicatePropertyOrder(t *testing.T) {
+	var header bytes.Buffer
+	writeValue(t, &header, uint32(868))
+	writeValue(t, &header, uint32(28))
+	writeValue(t, &header, uint32(10))
+	writeString(t, &header, "Replay")
+	writeInt := func(name string, value int32) {
+		writePropertyHeader(t, &header, name, "IntProperty")
+		writeValue(t, &header, value)
+	}
+	writeInt("Score", 1)
+	writeInt("Other", 10)
+	writeInt("Score", 2)
+	writePropertyHeader(t, &header, "Players", "ArrayProperty")
+	writeValue(t, &header, int32(2))
+	writeInt("Goal", 11)
+	writeInt("Other", 20)
+	writeInt("Goal", 12)
+	writePropertyHeader(t, &header, "Details", "StructProperty")
+	writeString(t, &header, "PlayerDetails")
+	writeInt("Rank", 101)
+	writeInt("Other", 200)
+	writeInt("Rank", 102)
+	writePropertyHeader(t, &header, "History", "ArrayProperty")
+	writeValue(t, &header, int32(1))
+	writeInt("Entry", 1)
+	writeInt("Entry", 2)
+	writeString(t, &header, "None")
+	writeString(t, &header, "None")
+	writeString(t, &header, "None")
+	writeInt("Goal", 21)
+	writeString(t, &header, "None")
+	writeInt("Score", 3)
+	writeString(t, &header, "None")
+
+	replay, err := Parse(source.FromBytes(replayWithHeader(t, &header)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPropertyNames(t, replay.OrderedProperties, "Score", "Other", "Score", "Players", "Score")
+	if replay.Properties["Score"] != replay.OrderedProperties[4] ||
+		replay.OrderedProperties[0].Value != int32(1) ||
+		replay.OrderedProperties[2].Value != int32(2) ||
+		replay.Properties["Score"].Value != int32(3) {
+		t.Fatal("top-level duplicate properties were not preserved")
+	}
+	players := replay.Properties["Players"]
+	if players == nil || len(players.Groups) != 2 {
+		t.Fatalf("unexpected players: %+v", players)
+	}
+	group := players.Groups[0]
+	assertPropertyNames(t, group.OrderedProperties, "Goal", "Other", "Goal", "Details")
+	if group.Properties["Goal"] != group.OrderedProperties[2] ||
+		group.OrderedProperties[0].Value != int32(11) || group.Properties["Goal"].Value != int32(12) {
+		t.Fatal("array group duplicate properties were not preserved")
+	}
+	assertPropertyNames(t, players.Groups[1].OrderedProperties, "Goal")
+	if players.Groups[1].Properties["Goal"].Value != int32(21) {
+		t.Fatal("array groups do not have independent properties")
+	}
+	details, ok := group.Properties["Details"].Value.(rocket.StructProperty)
+	if !ok || details.Name != "PlayerDetails" {
+		t.Fatalf("unexpected struct: %+v", group.Properties["Details"])
+	}
+	assertPropertyNames(t, details.OrderedFields, "Rank", "Other", "Rank", "History")
+	if details.Fields["Rank"] != details.OrderedFields[2] ||
+		details.OrderedFields[0].Value != int32(101) || details.Fields["Rank"].Value != int32(102) {
+		t.Fatal("struct duplicate fields were not preserved")
+	}
+	history := details.Fields["History"]
+	if history == nil || len(history.Groups) != 1 {
+		t.Fatalf("unexpected history: %+v", history)
+	}
+	nested := history.Groups[0]
+	assertPropertyNames(t, nested.OrderedProperties, "Entry", "Entry")
+	if nested.Properties["Entry"] != nested.OrderedProperties[1] ||
+		nested.OrderedProperties[0].Value != int32(1) || nested.Properties["Entry"].Value != int32(2) {
+		t.Fatal("nested array group duplicate properties were not preserved")
+	}
+}
+
+func TestParseLegacyReplayFixture(t *testing.T) {
+	replay, err := Parse(source.FromFile("../samples/boxcars/no-frames.replay"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.HeaderInfo.EngineVersion != 0 || replay.HeaderInfo.LicenseeVersion != 0 {
+		t.Fatalf("unexpected version: %+v", replay.HeaderInfo)
+	}
+	assertPropertyNames(t, replay.OrderedProperties, "TeamSize", "PrimaryPlayerTeam", "RecordFPS",
+		"KeyframeDelay", "MaxChannels", "MaxReplaySizeMB", "Id", "Date", "MatchType", "PlayerName")
+	matchType, teamSize := replay.Properties["MatchType"], replay.Properties["TeamSize"]
+	if matchType == nil || matchType.Value != "Online" || teamSize == nil || teamSize.Value != int32(2) {
+		t.Fatalf("unexpected legacy replay properties: MatchType=%+v, TeamSize=%+v", matchType, teamSize)
 	}
 }
 
@@ -574,6 +790,36 @@ func writeValue(t *testing.T, data *bytes.Buffer, value interface{}) {
 	t.Helper()
 	if err := binary.Write(data, binary.LittleEndian, value); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func writePropertyHeader(t *testing.T, data *bytes.Buffer, name, kind string) {
+	t.Helper()
+	writeString(t, data, name)
+	writeString(t, data, kind)
+	writeValue(t, data, uint32(0))
+	writeValue(t, data, uint32(0))
+}
+
+func replayWithHeader(t *testing.T, header *bytes.Buffer) []byte {
+	t.Helper()
+	var replay bytes.Buffer
+	writeValue(t, &replay, int32(header.Len()))
+	writeValue(t, &replay, replayCRC32(header.Bytes()))
+	replay.Write(header.Bytes())
+	replay.Write(emptyBody(t))
+	return replay.Bytes()
+}
+
+func assertPropertyNames(t *testing.T, properties []*rocket.Property, names ...string) {
+	t.Helper()
+	if len(properties) != len(names) {
+		t.Fatalf("got %d ordered properties, want %d", len(properties), len(names))
+	}
+	for i, name := range names {
+		if properties[i] == nil || properties[i].Name != name {
+			t.Fatalf("property %d: got %+v, want %q", i, properties[i], name)
+		}
 	}
 }
 

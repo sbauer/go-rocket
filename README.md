@@ -51,7 +51,8 @@ package.
 
 - Header versions and replay properties, including scores, player stats, and goals.
   Scalar and nested `StructProperty` values are in `Property.Value`; array
-  elements are in `Property.Groups`.
+  elements are in `Property.Groups`. The Go types for each property type are
+  documented on `rocket.Property`.
 - Levels, keyframes, debug data, tickmarks, packages, objects, and names.
 - Class indices and network caches.
 - The raw, undecoded network stream in `Replay.NetworkData`.
@@ -59,6 +60,12 @@ package.
 
 Replay text is decoded as UTF-16 or Windows-1252; identifiers use UTF-8.
 Strings are returned without their serialized null terminators.
+
+`Replay.OrderedProperties` preserves header order and duplicate names. Array
+groups have `OrderedProperties`, and struct values have `OrderedFields`.
+Their corresponding `Properties` or `Fields` maps provide the last occurrence
+of each name. Both views share property pointers, but adding, removing, or
+renaming entries does not automatically synchronize them.
 
 Header and body CRCs are checked by `parsers.Parse` by default. Use
 `parsers.ParseWithOptions` with `ParseOptions{CRCValidation: parsers.CRCValidationNever}`

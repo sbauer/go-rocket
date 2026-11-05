@@ -11,7 +11,7 @@ import (
 )
 
 func FuzzParseReplay(f *testing.F) {
-	for _, name := range []string{"07e9", "dropshot_rumble"} {
+	for _, name := range []string{"07e9", "dropshot_rumble", "no-frames"} {
 		data, err := ioutil.ReadFile("../samples/boxcars/" + name + ".replay")
 		if err != nil {
 			f.Fatal(err)
