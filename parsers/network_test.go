@@ -361,6 +361,29 @@ func TestParseNetworkOption(t *testing.T) {
 	}
 }
 
+func TestDecodeNetworkWithoutFrameCount(t *testing.T) {
+	t.Run("empty stream", func(t *testing.T) {
+		replay := networkTestReplay()
+		delete(replay.Properties, "NumFrames")
+		replay.NetworkData = nil
+		frames, err := decodeNetwork(replay)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frames == nil || len(frames) != 0 {
+			t.Fatalf("got %#v, want an empty frame slice", frames)
+		}
+	})
+	t.Run("non-empty stream", func(t *testing.T) {
+		replay := networkTestReplay()
+		delete(replay.Properties, "NumFrames")
+		replay.NetworkData = networkTestData()
+		if _, err := decodeNetwork(replay); err == nil || !strings.Contains(err.Error(), "missing or negative NumFrames") {
+			t.Fatalf("got %v, want missing frame count error", err)
+		}
+	})
+}
+
 func encodeNetworkTestReplay(t *testing.T, network []byte) []byte {
 	t.Helper()
 	replay := networkTestReplay()
