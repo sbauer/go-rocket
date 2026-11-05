@@ -1,7 +1,7 @@
 package rocket
 
 // Property contains a replay property. Value is int32 for IntProperty, float32
-// for FloatProperty, bool for BoolProperty, int64 for QWordProperty, and string
+// for FloatProperty, bool for BoolProperty, uint64 for QWordProperty, and string
 // for StrProperty and NameProperty. ByteProperty values are either a byte, an
 // enum string in "kind|value" form, or a single string in version 0/0 replays.
 // StructProperty values are StructProperty; ArrayProperty values use Groups.

@@ -328,7 +328,7 @@ func (parser *Parser) parsePropertyValue(reader io.Reader, typeName string, lega
 		err := readAsType(reader, &value)
 		return value != 0, err
 	case "QWordProperty":
-		var qword int64
+		var qword uint64
 		err := readAsType(reader, &qword)
 		return qword, err
 	default:
