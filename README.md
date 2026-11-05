@@ -21,24 +21,30 @@ import (
 	"log"
 
 	"github.com/sbauer/go-rocket/parsers"
-	"github.com/sbauer/go-rocket/source"
 )
 
 func main() {
-	replay, err := parsers.Parse(source.FromFile("replay.replay"))
+	replay, err := parsers.ParseFile("replay.replay", parsers.ParseOptions{
+		CRCValidation: parsers.CRCValidationAlways,
+		DecodeNetwork: true,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	fmt.Println("Replay type:", replay.HeaderInfo.ClassName)
-	if mapName, ok := replay.Properties["MapName"]; ok {
-		fmt.Println("Map:", mapName.Value)
+	match, err := replay.MatchData()
+	if err != nil {
+		log.Fatal(err)
 	}
+	fmt.Println("Map:", match.MapName)
 	fmt.Println("Keyframes:", len(replay.Keyframes))
 }
 ```
 
-Use `source.FromBytes(data)` instead to parse an in-memory replay.
+For an in-memory replay, use
+`parsers.ParseWithOptions(source.FromBytes(data), options)` with
+`github.com/sbauer/go-rocket/source`.
 
 To decode network frames, use `parsers.ParseWithOptions` with
 `parsers.ParseOptions{DecodeNetwork: true}`. This retains `Replay.NetworkData`
@@ -53,6 +59,9 @@ package.
   Scalar and nested `StructProperty` values are in `Property.Value`; array
   elements are in `Property.Groups`. The Go types for each property type are
   documented on `rocket.Property`.
+- `Replay.MatchData()` provides typed map, date, match type, score, goal,
+  highlight, player-stat, and team data; the original property maps remain
+  available for other fields.
 - Levels, keyframes, debug data, tickmarks, packages, objects, and names.
 - Class indices and network caches.
 - The raw, undecoded network stream in `Replay.NetworkData`.

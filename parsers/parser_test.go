@@ -151,6 +151,26 @@ func TestParseUsesOneSourceReader(t *testing.T) {
 	}
 }
 
+func TestParseFileWithOptions(t *testing.T) {
+	replay, err := ParseFile("../samples/first.replay", ParseOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replay.Frames) != 0 {
+		t.Fatalf("default options decoded %d network frames", len(replay.Frames))
+	}
+	replay, err = ParseFile("../samples/first.replay", ParseOptions{DecodeNetwork: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replay.Frames) != int(replay.Properties["NumFrames"].Value.(int32)) {
+		t.Fatalf("got %d decoded frames", len(replay.Frames))
+	}
+	if _, err := ParseFile("missing.replay", ParseOptions{}); err == nil {
+		t.Fatal("expected a file open error")
+	}
+}
+
 func TestParseRejectsTruncatedReplay(t *testing.T) {
 	data, err := ioutil.ReadFile("../samples/first.replay")
 	if err != nil {
