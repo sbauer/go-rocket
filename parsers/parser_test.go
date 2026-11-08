@@ -726,6 +726,17 @@ func TestParseLegacyReplayFixture(t *testing.T) {
 	}
 }
 
+func TestParseLegacyReplayWithoutFrames(t *testing.T) {
+	replay, err := ParseWithOptions(source.FromFile("../samples/boxcars/no-frames.replay"),
+		ParseOptions{DecodeNetwork: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.Frames == nil || len(replay.Frames) != 0 {
+		t.Fatalf("got %#v, want an empty frame slice", replay.Frames)
+	}
+}
+
 func TestParseNetVersionBoundary(t *testing.T) {
 	tests := []struct {
 		major, minor uint32

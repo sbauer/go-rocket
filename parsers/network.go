@@ -19,6 +19,9 @@ func decodeNetwork(replay *rocket.Replay) ([]rocket.NetworkFrame, error) {
 	if replay.HeaderInfo == nil {
 		return nil, fmt.Errorf("missing replay header")
 	}
+	if _, hasNumFrames := replay.Properties["NumFrames"]; !hasNumFrames && len(replay.NetworkData) == 0 {
+		return []rocket.NetworkFrame{}, nil
+	}
 	numFrames, err := networkIntProperty(replay, "NumFrames", -1)
 	if err != nil {
 		return nil, err
