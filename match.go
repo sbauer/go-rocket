@@ -4,17 +4,20 @@ import "fmt"
 
 // MatchData contains commonly used replay metadata in typed form.
 type MatchData struct {
-	MapName     string
-	Date        string
-	MatchType   string
-	TeamSize    int32
-	Team0Score  *int32
-	Team1Score  *int32
-	WinningTeam *int32
-	Goals       []Goal
-	Highlights  []Highlight
-	PlayerStats []PlayerStat
-	Teams       []Team
+	MapName            string
+	Date               string
+	MatchType          string
+	TeamSize           int32
+	Team0Score         *int32
+	Team1Score         *int32
+	Team0ScoreDerived  bool // True when inferred from the Goals property.
+	Team1ScoreDerived  bool // True when inferred from the Goals property.
+	WinningTeam        *int32
+	WinningTeamDerived bool // True when inferred from the normalized team scores.
+	Goals              []Goal
+	Highlights         []Highlight
+	PlayerStats        []PlayerStat
+	Teams              []Team
 }
 
 // Goal records the scorer, team, and frame for a goal.
@@ -87,6 +90,29 @@ func (replay *Replay) MatchData() (MatchData, error) {
 	if result.Goals, err = matchGoals(properties); err != nil {
 		return MatchData{}, err
 	}
+	if _, hasGoals := properties["Goals"]; hasGoals {
+		if team0Goals, team1Goals, complete := countGoalsByTeam(result.Goals); complete {
+			if result.Team0Score == nil {
+				result.Team0Score = &team0Goals
+				result.Team0ScoreDerived = true
+			}
+			if result.Team1Score == nil {
+				result.Team1Score = &team1Goals
+				result.Team1ScoreDerived = true
+			}
+		}
+	}
+	if result.WinningTeam == nil && result.Team0Score != nil && result.Team1Score != nil {
+		if *result.Team0Score > *result.Team1Score {
+			value := int32(0)
+			result.WinningTeam = &value
+			result.WinningTeamDerived = true
+		} else if *result.Team1Score > *result.Team0Score {
+			value := int32(1)
+			result.WinningTeam = &value
+			result.WinningTeamDerived = true
+		}
+	}
 	if result.Highlights, err = matchHighlights(properties); err != nil {
 		return MatchData{}, err
 	}
@@ -95,6 +121,17 @@ func (replay *Replay) MatchData() (MatchData, error) {
 	}
 	result.Teams = matchTeams(result)
 	return result, nil
+}
+
+func countGoalsByTeam(goals []Goal) (int32, int32, bool) {
+	var scores [2]int32
+	for _, goal := range goals {
+		if goal.PlayerTeam < 0 || goal.PlayerTeam > 1 {
+			return 0, 0, false
+		}
+		scores[goal.PlayerTeam]++
+	}
+	return scores[0], scores[1], true
 }
 
 func matchString(properties map[string]*Property, name string) (string, bool, error) {
@@ -317,9 +354,12 @@ func matchTeams(data MatchData) []Team {
 		team.Players = append(team.Players, player.Name)
 		team.PlayerStats = append(team.PlayerStats, player)
 	}
+	teams[0].ScoreDerived = data.Team0ScoreDerived
+	teams[1].ScoreDerived = data.Team1ScoreDerived
 	if data.WinningTeam != nil {
 		if *data.WinningTeam == 0 || *data.WinningTeam == 1 {
 			teams[*data.WinningTeam].IsWinner = true
+			teams[*data.WinningTeam].WinnerDerived = data.WinningTeamDerived
 		}
 	} else if data.Team0Score != nil && data.Team1Score != nil {
 		if *data.Team0Score > *data.Team1Score {
