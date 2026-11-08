@@ -203,6 +203,87 @@ func TestAdditionalReplayFixtures(t *testing.T) {
 	}
 }
 
+func TestNetworkVariantReplayFixtures(t *testing.T) {
+	tests := []struct {
+		name            string
+		licensee, net   int
+		mapName, build  string
+		frames          int
+		spawns, deletes int
+		updates         int
+		spawnedObject   string
+	}{
+		{
+			name: "2974", licensee: 32, net: 11, mapName: "CHN_Stadium_P", build: "260303.78181.511382",
+			frames: 425, spawns: 38, updates: 777,
+			spawnedObject: "Archetypes.Ball.ball_luminousairplane",
+		},
+		{
+			name: "9065", licensee: 32, net: 10, mapName: "UF_Day_P", build: "250307.56620.477186",
+			frames: 725, spawns: 59, updates: 1216,
+			spawnedObject: "Archetypes.Ball.Ball_Fire",
+		},
+		{
+			name: "beach_ball", licensee: 32, net: 10, mapName: "UF_Day_P", build: "250307.56620.477186",
+			frames: 438, spawns: 34, updates: 581,
+			spawnedObject: "Archetypes.Ball.Ball_Beachball",
+		},
+		{
+			name: "b62e", licensee: 32, net: 10, mapName: "Park_P", build: "241014.43841.462850",
+			frames: 1453, spawns: 170, deletes: 90, updates: 3489,
+			spawnedObject: "Archetypes.Ball.Ball_Training",
+		},
+		{
+			name: "6796", licensee: 32, net: 10, mapName: "UF_Day_P", build: "250307.56620.477186",
+			frames: 248, spawns: 17, updates: 165,
+			spawnedObject: "GameInfo_Territory.GameInfo.GameInfo_Territory:Archetype",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			replay, err := ParseWithOptions(source.FromFile("../samples/boxcars/"+tt.name+".replay"),
+				ParseOptions{DecodeNetwork: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if replay.HeaderInfo.LicenseeVersion != tt.licensee || replay.HeaderInfo.NetVersion != tt.net ||
+				len(replay.Frames) != tt.frames || replay.Properties["MapName"].Value != tt.mapName ||
+				replay.Properties["BuildVersion"].Value != tt.build {
+				t.Fatalf("unexpected replay metadata: header=%+v frames=%d map=%v build=%v",
+					replay.HeaderInfo, len(replay.Frames),
+					replay.Properties["MapName"].Value, replay.Properties["BuildVersion"].Value)
+			}
+			var spawns, deletes, updates, rigidBodyUpdates int
+			var foundSpawnedObject bool
+			for _, frame := range replay.Frames {
+				for _, actor := range frame.Actors {
+					if actor.Spawn != nil {
+						spawns++
+						if replay.Objects[actor.Spawn.ObjectIndex] == tt.spawnedObject {
+							foundSpawnedObject = true
+						}
+					}
+					if actor.Deleted {
+						deletes++
+					}
+					for _, attribute := range actor.Attributes {
+						updates++
+						if _, ok := attribute.Value.(rocket.RigidBodyState); ok {
+							rigidBodyUpdates++
+						}
+					}
+				}
+			}
+			if spawns != tt.spawns || deletes != tt.deletes || updates != tt.updates ||
+				rigidBodyUpdates == 0 || !foundSpawnedObject {
+				t.Errorf("got spawns=%d deletes=%d updates=%d rigid-body-updates=%d found-object=%v",
+					spawns, deletes, updates, rigidBodyUpdates, foundSpawnedObject)
+			}
+		})
+	}
+}
+
 func assertFixtureUpdate(t *testing.T, replay *rocket.Replay, want fixtureUpdate) {
 	t.Helper()
 	for _, actor := range replay.Frames[want.frame].Actors {
