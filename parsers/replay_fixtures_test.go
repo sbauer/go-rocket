@@ -326,7 +326,7 @@ func assertNestedPlayerID(t *testing.T, replay *rocket.Replay) {
 		}
 		property = value.Fields[step.field]
 	}
-	if property == nil || property.Value != int64(0) {
+	if property == nil || property.Value != uint64(0) {
 		t.Fatalf("unexpected nested Data property: %+v", property)
 	}
 }

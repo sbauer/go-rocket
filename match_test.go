@@ -303,6 +303,74 @@ func TestMatchDataSupportsReplayFixtures(t *testing.T) {
 	}
 }
 
+func TestMatchDataPreservesPlatformIdentifiers(t *testing.T) {
+	for _, name := range []string{"7083", "d52eb"} {
+		t.Run(name+" high-bit online ID", func(t *testing.T) {
+			replay, err := parsers.Parse(source.FromFile("samples/boxcars/" + name + ".replay"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			match, err := replay.MatchData()
+			if err != nil {
+				t.Fatal(err)
+			}
+			groups := replay.Properties["PlayerStats"].Groups
+			found, foundHighBit := false, false
+			for i, player := range match.PlayerStats {
+				if player.Platform == "OnlinePlatform|OnlinePlatform_NNX" {
+					rawProperty := groups[i].Properties["OnlineID"]
+					if rawProperty == nil {
+						t.Fatalf("raw NNX ID missing in player group %d", i)
+					}
+					rawID, ok := rawProperty.Value.(uint64)
+					if !ok {
+						t.Fatalf("raw NNX ID has type %T", rawProperty.Value)
+					}
+					if player.OnlineID == nil || *player.OnlineID != rawID {
+						t.Errorf("typed NNX ID=%v, raw=%d", player.OnlineID, rawID)
+					}
+					if rawID >= uint64(1)<<63 {
+						foundHighBit = true
+					}
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("fixture has no NNX player")
+			}
+			if !foundHighBit {
+				t.Fatal("fixture has no high-bit NNX player ID")
+			}
+		})
+	}
+
+	t.Run("Epic account ID", func(t *testing.T) {
+		replay, err := parsers.Parse(source.FromFile("samples/boxcars/MaxNumJumps.replay"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		match, err := replay.MatchData()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rawID, ok := replay.Properties["PlayerStats"].Groups[0].Properties["PlayerID"].Value.(rocket.StructProperty)
+		if !ok {
+			t.Fatal("PlayerID is not a struct")
+		}
+		rawProperty := rawID.Fields["EpicAccountId"]
+		if rawProperty == nil {
+			t.Fatal("EpicAccountId is missing")
+		}
+		rawValue, ok := rawProperty.Value.(string)
+		if !ok {
+			t.Fatalf("EpicAccountId has type %T", rawProperty.Value)
+		}
+		if match.PlayerStats[0].EpicAccountID == nil || *match.PlayerStats[0].EpicAccountID != rawValue {
+			t.Fatalf("typed Epic account ID=%v, raw=%q", match.PlayerStats[0].EpicAccountID, rawValue)
+		}
+	})
+}
+
 func int32Pointer(value int32) *int32 {
 	return &value
 }

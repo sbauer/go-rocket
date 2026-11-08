@@ -37,16 +37,17 @@ type Highlight struct {
 
 // PlayerStat contains a player's match results and identity metadata.
 type PlayerStat struct {
-	Name     string
-	Team     *int32
-	Score    int32
-	Goals    int32
-	Assists  int32
-	Saves    int32
-	Shots    int32
-	IsBot    bool
-	Platform string
-	OnlineID *int64
+	Name          string
+	Team          *int32
+	Score         int32
+	Goals         int32
+	Assists       int32
+	Saves         int32
+	Shots         int32
+	IsBot         bool
+	Platform      string
+	OnlineID      *uint64 // Unsigned QWord ID for platforms that use one.
+	EpicAccountID *string // Nested Epic ID, when present in PlayerID.
 }
 
 // MatchData reads the common typed match metadata from the replay properties.
@@ -322,15 +323,42 @@ func matchPlayerStats(properties map[string]*Property) ([]PlayerStat, error) {
 			if property == nil {
 				return nil, fmt.Errorf("PlayerStats group %d: property %q is nil", i, "OnlineID")
 			}
-			value, ok := property.Value.(int64)
+			value, ok := property.Value.(uint64)
 			if !ok {
-				return nil, fmt.Errorf("PlayerStats group %d: property %q has type %T, want int64", i, "OnlineID", property.Value)
+				return nil, fmt.Errorf("PlayerStats group %d: property %q has type %T, want uint64", i, "OnlineID", property.Value)
 			}
 			stat.OnlineID = &value
+		}
+		stat.EpicAccountID, err = playerEpicAccountID(fields)
+		if err != nil {
+			return nil, fmt.Errorf("PlayerStats group %d: %w", i, err)
 		}
 		result = append(result, stat)
 	}
 	return result, nil
+}
+
+func playerEpicAccountID(fields map[string]*Property) (*string, error) {
+	playerID, ok := fields["PlayerID"]
+	if !ok || playerID == nil {
+		return nil, nil
+	}
+	id, ok := playerID.Value.(StructProperty)
+	if !ok {
+		return nil, nil
+	}
+	property, ok := id.Fields["EpicAccountId"]
+	if !ok {
+		return nil, nil
+	}
+	if property == nil {
+		return nil, fmt.Errorf("property %q is nil", "EpicAccountId")
+	}
+	value, ok := property.Value.(string)
+	if !ok {
+		return nil, fmt.Errorf("property %q has type %T, want string", "EpicAccountId", property.Value)
+	}
+	return &value, nil
 }
 
 func matchTeams(data MatchData) []Team {

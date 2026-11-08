@@ -62,6 +62,8 @@ package.
 - `Replay.MatchData()` provides typed map, date, match type, score, goal,
   highlight, player-stat, and team data; the original property maps remain
   available for other fields.
+- Typed player stats expose unsigned `OnlineID` values and nested
+  `EpicAccountID` values when present.
 - Levels, keyframes, debug data, tickmarks, packages, objects, and names.
 - Class indices and network caches.
 - The raw, undecoded network stream in `Replay.NetworkData`.
